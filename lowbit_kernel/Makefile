@@ -1,6 +1,6 @@
 # host compiler
 HOST_COMPILER ?= g++
-NVCC          := nvcc -ccbin $(HOST_COMPILER) # -O0 -g -G
+NVCC          := nvcc -ccbin $(HOST_COMPILER) -O0 -g -G
 
 # internal flags
 NVCCFLAGS   := -m$(shell getconf LONG_BIT)
@@ -48,7 +48,9 @@ HEAD_FILES = csrc/fp6_linear.cuh \
 			 csrc/utils/weight_dequant.h \
 			 csrc/utils/helper.h \
 			 csrc/kernel_test.h \
-			 csrc/fp6_linear.cu
+			 csrc/fp6_linear.cu \
+			 
+			 
 # csrc/bgemm/helper_cuda.h \
 # 			 csrc/bgemm/helper_functions.h \
 # Target rules
@@ -66,7 +68,7 @@ fp6: fp6.o
 bgemm.so: bgemm.o
 	$(EXEC) $(NVCC) --shared $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
 
-bgemm.o: csrc/bgemm.cu $(HEAD_FILES)
+bgemm.o: csrc/benchmark.cu $(HEAD_FILES)
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
 bgemm: bgemm.o

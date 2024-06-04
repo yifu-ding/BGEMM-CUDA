@@ -19,11 +19,11 @@ extra_compile_args = {
 
 setup(
     name="lowbit_kernel",
-    author="Haojun Xia, Zhen Zheng, Xiaoxia Wu, Shiyang Chen, Zhewei Yao, Stephen Youn, Arash Bakhtiari, Michael Wyatt, Donglin Zhuang, Zhongzhu Zhou, Olatunji Ruwase, Yuxiong He, Shuaiwen Leon Song",
+    author="Yifu Ding",
     version="0.1",
-    author_email="xhjustc@gmail.com",
-    description = "An efficient GPU support for LLM inference with 6-bit quantization (FP6).",
-    python_requires=">=3.8",
+    author_email="eveedyf@gmail.com",
+    description = "A Binary General Matrix Multiply Kernel. ",
+    python_requires=">=3.7",
     install_requires=[
         "torch",
         "transformers"
@@ -34,7 +34,8 @@ setup(
             name="lowbit_kernel",
             sources=[
                 "lowbit_kernel/csrc/pybind.cpp", 
-                "lowbit_kernel/csrc/fp6_linear.cu"
+                "lowbit_kernel/csrc/fp6_linear.cu", 
+                "lowbit_kernel/csrc/bgemm.cu",
             ],
             extra_compile_args=extra_compile_args,
         ),

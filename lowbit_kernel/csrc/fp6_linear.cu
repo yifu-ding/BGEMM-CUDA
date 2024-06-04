@@ -327,4 +327,63 @@ torch::Tensor weight_matrix_dequant_cpu(torch::Tensor fp6_tensor, torch::Tensor 
     //
     return fp16_tensor;
 }
+// #endif
+
+
+/*
+Computes FP6-FP16 GEMM (PyTorch interface).
+
+[Mathmatical Formula]
+Standard definition of linear layer:    Out = In * trans(W), where In, Out, and W are stored in row-major.
+After Equivalent transformation    :    trans(Out) = W * trans(In). Note that we do not perform "transpose" during runtime, we instead interpret the In/Out as column-major matrices when calling our CUDA kernel.
+
+[Inputs]
+  _in_feats:  tensor of shape [B, IC];                  // half 
+  _weights:   int tensor of shape [OC, IC // 16 * 3];   // 3 INT32 words contains 16 FP6 weights.
+  _scales:    tensor of shape [OC];                     // half
+  splitK:     spliting the MatMul problem along K dimension for higher GPU utilization, default 1.
+[Outputs]
+  _out_feats: tensor of shape [B, OC];                  // half
+*/
+torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,
+                                      torch::Tensor _weights,
+                                      int           splitK=1)
+{
+    int num_in_feats      = _in_feats.size(0);
+    int num_in_channels   = _in_feats.size(1);
+    int num_out_channels  = _weights.size(0);
+    assert( num_in_channels%64 == 0 );
+    assert( (num_in_channels/16*3) == _weights.size(1) );    // Making sure the K dimension is matched.
+    //
+    int M = num_out_channels;
+    int K = num_in_channels;
+    int N = num_in_feats;
+    // Input Tensors
+    auto weight = reinterpret_cast<const uint4*>(_weights.data_ptr<int>());  // weights is [OC, IC] but in FP6.
+    auto in_feats = reinterpret_cast<const half*>(_in_feats.data_ptr<at::Half>());
+    auto scales = NULL;
+
+    // Output Tensors
+    auto options = torch::TensorOptions().dtype(_in_feats.dtype()).device(_in_feats.device());
+    at::Tensor _out_feats = torch::empty({num_in_feats, num_out_channels}, options);
+    auto out_feats = reinterpret_cast<half*>(_out_feats.data_ptr<at::Half>());
+
+    options = torch::TensorOptions().dtype(torch::kFloat32).device(_in_feats.device());
+    at::Tensor _workspace = torch::empty({splitK, num_in_feats, num_out_channels}, options);
+    auto Reduction_Workspace = reinterpret_cast<float*>(_workspace.data_ptr<float>());  // Reduction_Workspace_Size = Split_K * M_Global * N_Global * sizeof(fp32)
+      
+    bin_linear_kernel(0, // Using default stream here.
+                      weight,
+                      scales,
+                      in_feats,
+                      out_feats,
+                      M,
+                      N,
+                      K, 
+                      Reduction_Workspace,  
+                      splitK);
+
+    return _out_feats;
+}
+
 #endif

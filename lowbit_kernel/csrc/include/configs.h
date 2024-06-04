@@ -79,13 +79,11 @@ struct TilingConfig {
     static constexpr int TILE_K                 = WARP_K;
     static constexpr int TILE_M_BIN             = 128;
     static constexpr int TILE_N_BIN             = MMA_16  * WARP_COL_MMA_TENSORS * BLOCK_COL_WARPS; // 16*8*1=128
-    // static constexpr int TILE_N_BIN             = 32 * WARP_COL_MMA_TENSORS * BLOCK_COL_WARPS;
     static constexpr int TILE_K_BIN             = WARP_K_BIN;
 
     /********************** #Thread per Thread Block **********************/
-    static constexpr int BLOCK_WARPS        = BLOCK_ROW_WARPS * BLOCK_COL_WARPS;
-    static constexpr int BLOCK_WARPS_BIN    = WARP_COL_MMA_TENSORS * BLOCK_COL_WARPS;
-    static constexpr int BLOCK_THREADS      = BLOCK_WARPS * WARP_SIZE;
+    static constexpr int BLOCK_WARPS   = BLOCK_ROW_WARPS * BLOCK_COL_WARPS;
+    static constexpr int BLOCK_THREADS = BLOCK_WARPS * WARP_SIZE;
     /******************************* Others *******************************/
     static constexpr int SMEM_SIZE_B_TILE   = TILE_N * (TILE_K + PADDING_BYTES_16) * 2 * PIPELINE_LEVEL_GMEM;          // sizeof(half)=2, doubleBuffer=2
     static constexpr int SMEM_SIZE_C_TILE   = TILE_N * (TILE_M + PADDING_BYTES_16) * 4;                             // sizeof(float)=4

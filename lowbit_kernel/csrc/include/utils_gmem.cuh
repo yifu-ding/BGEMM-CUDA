@@ -106,14 +106,7 @@ __device__ __forceinline__ void CopyFromGlobalToShared_B(uint32_t __restrict__ (
     //  1 Group (1 Threads) can copy one line 128b (4 uint32 = 16B) each time 
     const int NumOfThreads  = BLOCK_WARPS * WARP_SIZE;  // 4*32=128
     const int NumOfGroups   = NumOfThreads / 4; // 128/4=32
-    const int MaxIteration  = (NumOfLinesLeft-1) / NumOfGroups + 1;  // (128-1) / 32 + 1 = 4
-    // if (NumOfLinesLeft>=MaxNumOfLinesToCopy) {
-    //     const int MaxIteration  = (MaxNumOfLinesToCopy-1) / NumOfGroups + 1;  // (128-1) / 32 + 1 = 4
-    // } else {
-    //     const int MaxIteration  = (NumOfLinesLeft-1) / NumOfGroups + 1;  // (128-1) / 32 + 1 = 4
-    // }
-
-    
+    const int MaxIteration  = (MaxNumOfLinesToCopy-1) / NumOfGroups + 1;  // (128-1) / 32 + 1 = 4
     // runtime variables
 
     const int line_id = threadIdx.x % WARP_SIZE; // 32
@@ -130,8 +123,7 @@ __device__ __forceinline__ void CopyFromGlobalToShared_B(uint32_t __restrict__ (
     #pragma unroll
     for (int i = 0; i < MaxIteration; i++) { // 16B*32=512
 
-        // bool AsyncCopyPred = (line_id+i*NumOfGroups) < NumOfLinesLeft && Pred;
-        bool AsyncCopyPred = (line_id+i*GlobalStride/32*2) < NumOfLinesLeft && Pred; 
+        bool AsyncCopyPred = (line_id+i*NumOfGroups) < NumOfLinesLeft && Pred;
         cp_async<16>((SPTR_HALF), GPTR_HALF, AsyncCopyPred); // 16B
         //
         // GlobalPTR += NumOfGroups * GlobalStride/32; // + 16*K/32

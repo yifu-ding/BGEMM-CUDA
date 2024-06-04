@@ -53,4 +53,11 @@ torch::Tensor weight_matrix_prepacking_cpu(torch::Tensor fp6_tensor);
  *  fp16_tensor: half tensor of shape [OC, IC].     
  */
 torch::Tensor weight_matrix_dequant_cpu(torch::Tensor fp6_tensor, torch::Tensor fp16_scale);
+
+torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,
+                                      torch::Tensor _weights,
+                                      torch::Tensor _scales,
+                                      int           splitK=1);
+
+                                      
 #endif

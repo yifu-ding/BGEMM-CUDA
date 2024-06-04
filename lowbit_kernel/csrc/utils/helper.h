@@ -46,7 +46,7 @@ void print_binary(half *inp, const char *array_name, int M, int K) {
         fp = fopen ("B_bin_bug.txt", "w+");
     }
     for (int i=1; i<=M*K; ++i) {
-        fprintf(fp, "%d", (int) inp[i-1]);
+        // fprintf(fp, "%d",  (int)(inp[i-1])); // pybind会报错
         if (i % 32 == 0) fprintf(fp, " ");
         if (i % K == 0) {
             fprintf(fp, "\n");  // M elements per row
