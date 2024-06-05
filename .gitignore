@@ -8,3 +8,4 @@ build
 kernel_test
 *.egg-info
 .vscode
+*.txt
