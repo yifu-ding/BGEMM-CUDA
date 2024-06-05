@@ -24,10 +24,10 @@ setup(
     author_email="eveedyf@gmail.com",
     description = "A Binary General Matrix Multiply Kernel. ",
     python_requires=">=3.7",
-    install_requires=[
-        "torch",
-        "transformers"
-    ],
+    # install_requires=[
+    #     "torch",
+    #     "transformers"
+    # ],
     packages=find_packages(),
     ext_modules=[
         CUDAExtension(

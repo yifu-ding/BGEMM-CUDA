@@ -28,9 +28,16 @@ cd lowbit_kernel && make bgemm
 | 22016 | 128            | 8192  | 1      | 10000     | 0.743   | 0.162 | 62.13              | 284.6  |
 | 8192  | 128            | 22016 | 1      | 10000     | 0.732   | 0.148 | 63.05              | 312.75 |
 
+## TODO
+- [ ] Pytorch extension and real model demo. 
+- [ ] More bitwidth support, e.g., W$_1$A$_f16$, W$_1$A$_f8$. 
+- [ ] Support arbitrarily N (batch size). 
+- [ ] Optimize Share Memory Usage. 
+- [ ] Larger bandwidth instruction support (m16n8k256) for further speedup. 
+
 ## Reference
 
-- Thank FP6-LLM for the wheels. [Arxiv](https://arxiv.org/abs/2401.14112)
+- FP6-LLM. [Arxiv](https://arxiv.org/abs/2401.14112)
 
 ```
 @misc{xia2024fp6llm,
@@ -46,3 +53,4 @@ cd lowbit_kernel && make bgemm
 - [The PTX ISA 8.5](https://docs.nvidia.com/cuda/parallel-thread-execution/index.html)
 
 - [cuBLAS: Basic Linear Algebra on NVIDIA GPUs](https://developer.nvidia.com/cublas)
+

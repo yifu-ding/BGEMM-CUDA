@@ -3,6 +3,7 @@
 #include <cuda.h>
 #include <stdlib.h>
 #include <stdio.h>
+#include "kernel_test.h"
 
 #define SAVE_IO
 #define BENCHMARK_MODE

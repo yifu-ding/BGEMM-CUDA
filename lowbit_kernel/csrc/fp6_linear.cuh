@@ -59,5 +59,5 @@ torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,
                                       torch::Tensor _scales,
                                       int           splitK=1);
 
-                                      
+
 #endif

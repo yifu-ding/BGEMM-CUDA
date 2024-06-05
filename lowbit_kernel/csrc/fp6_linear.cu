@@ -8,7 +8,6 @@
 #include <stdio.h>
 #include <assert.h>
 
-#include "kernel_test.h"
 #include "include/configs.h"
 
 
@@ -220,7 +219,7 @@ cudaError_t bin_linear_kernel(cudaStream_t    stream,
 
 #ifndef NO_PYTORCH
 #include <torch/extension.h>
-#include <ATen/ATen.h>
+// #include <ATen/ATen.h>
 
 /*
 Computes FP6-FP16 GEMM (PyTorch interface).
@@ -329,6 +328,26 @@ torch::Tensor weight_matrix_dequant_cpu(torch::Tensor fp6_tensor, torch::Tensor 
 }
 // #endif
 
+/*
+ * Weight prepacking (Pytorch interface).
+ * [Input & Output]
+ *  fp6_tensor: int tensor of shape [OC, IC // 16 * 3];   // 3 INT32 words contains 16 FP6 weights.
+ * [Output]
+ *  packed_tensor: int tensor of shape [OC, IC // 16 * 3];
+ */
+torch::Tensor bin_matrix_prepacking_cpu(torch::Tensor _tensor)
+{
+    size_t OC = _tensor.size(0);
+    size_t IC = _tensor.size(1);
+    assert (IC%3==0);   
+    IC = IC*16/3;
+    assert( (OC%256==0) && (IC%64==0) );
+    auto packed_tensor = torch::empty_like(_tensor);
+    auto packed_tensor_ptr = reinterpret_cast<int*>(packed_tensor.data_ptr<int>());
+    auto _tensor_ptr = reinterpret_cast<int*>(_tensor.data_ptr<int>());
+    bin_matrix_prepacking_to_uint32(packed_tensor_ptr, _tensor_ptr, OC, IC);
+    return packed_tensor;
+}
 
 /*
 Computes FP6-FP16 GEMM (PyTorch interface).
@@ -358,10 +377,16 @@ torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,
     int M = num_out_channels;
     int K = num_in_channels;
     int N = num_in_feats;
+
+    
+
     // Input Tensors
     auto weight = reinterpret_cast<const uint4*>(_weights.data_ptr<int>());  // weights is [OC, IC] but in FP6.
+    // auto in_feats = reinterpret_cast<const half*>(_in_feats.data_ptr<at::Half>());
     auto in_feats = reinterpret_cast<const half*>(_in_feats.data_ptr<at::Half>());
-    auto scales = NULL;
+    half* scales = NULL;
+
+
 
     // Output Tensors
     auto options = torch::TensorOptions().dtype(_in_feats.dtype()).device(_in_feats.device());
@@ -371,10 +396,13 @@ torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,
     options = torch::TensorOptions().dtype(torch::kFloat32).device(_in_feats.device());
     at::Tensor _workspace = torch::empty({splitK, num_in_feats, num_out_channels}, options);
     auto Reduction_Workspace = reinterpret_cast<float*>(_workspace.data_ptr<float>());  // Reduction_Workspace_Size = Split_K * M_Global * N_Global * sizeof(fp32)
-      
+    
+
+
     bin_linear_kernel(0, // Using default stream here.
                       weight,
                       scales,
+                      scales, 
                       in_feats,
                       out_feats,
                       M,
