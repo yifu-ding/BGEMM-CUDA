@@ -30,10 +30,10 @@ cd lowbit_kernel && make bgemm
 
 ## TODO
 - [ ] Pytorch extension and real model demo. 
-- [ ] More bitwidth support, e.g., W$_1$A$_f16$, W$_1$A$_f8$. 
-- [ ] Support arbitrarily N (batch size). 
+- [ ] More bitwidth support, e.g., $W_1A_{f16}$, $W_1A_{f8}$. 
+- [ ] Support arbitrarily $N$ (batch size). 
 - [ ] Optimize Share Memory Usage. 
-- [ ] Larger bandwidth instruction support (m16n8k256) for further speedup. 
+- [ ] Larger bandwidth instruction support (`m16n8k256`) for further speedup. 
 
 ## Reference
 
