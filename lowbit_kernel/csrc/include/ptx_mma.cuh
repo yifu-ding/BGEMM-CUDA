@@ -218,5 +218,66 @@ MMA_B1B1_M8N8K128_XOR(uint32_t __restrict__ c[], uint32_t __restrict__ *a, uint3
           "r"(c[0]), "r"(c[1]));
 }
 
+
+__device__ __forceinline__ void
+SIGN_32_HALF_TO_UINT32(uint32_t __restrict__ d[], half __restrict__ *a)
+{
+    int16_t const *A = reinterpret_cast<int16_t const *>(a);
+
+    asm volatile("mov.b32 %0,0x0; \n\t": "=r"(d[0]));
+    // uint16_t tmp1 = 0x8765;
+    // uint16_t tmp2 = 0x4321;
+
+    for (uint32_t i = 0; i < 16; i++) { // num of half
+        /* asm volatile(
+            "{      \n\t"
+            // ".reg .u16 m,n;                 \n\t"
+            ".reg .u32 a,b,c,d;             \n\t" 
+            // "mov.u16 m,%1;                  \n\t"
+            // "mov.u16 n,%2;                  \n\t"
+            // "mov.b32 a,{m,n};               \n\t" // pack 2 half to u32
+            "mov.b32 a,{%1,%2};             \n\t" // pack 2 half to u32
+            "and.b32 b,a,0x00008000;        \n\t"  // sign of %2
+            "shr.b32 c,b,%3;                \n\t"  // right shift %3 bits and save to c
+            "and.b32 b,a,0x80000000;        \n\t"  // sign of %1    
+            "shr.b32 d,b,%3;                \n\t"  // right shift %4 bits and save to d
+            "or.b32  d,d,c;                 \n\t"
+            // "or.b32  %0,%0,d;               \n\t"
+            "mov.b32 c,%0;                  \n\t"
+            "or.b32  d,d,c;                 \n\t"
+            "mov.b32 %0,d;                  \n\t"    
+            "}"
+            : "=r"(d[0]) : "h"(A[i]), "h"(A[i+16]), "r"(i)); */
+
+            asm volatile(
+                "{      \n\t"
+                ".reg .b32 a;                      \n\t" 
+                "mov.b32 a,{%1,%2};                \n\t" // pack 2 half to u32, order: %2%1
+                "and.b32 a,a,0x80008000;           \n\t"  // sign of two half
+                "shr.b32 a,a,%3;                   \n\t"  // right shift %3 bits and save to c
+                "or.b32  %0,%4,a;                  \n\t"
+                "}"
+                : "=r"(d[0]) : "h"(A[i+16]), "h"(A[i]), "r"(i), "r"(d[0]));
+    }
+    /* for (uint32_t i = 16; i < 32; i++) { // num of half
+        asm volatile("and.b16 "
+                     "{ %0}, "
+                     "{ %1, %2};\n\t"
+                    : "=h"(sign_16[i])
+                    : "h"(A[i]), "h"(b));
+        asm volatile("shr.b32 "
+                    "{%0}, "
+                    "{%1, %2};\n\t"
+                    : "=r"(sign_32[i])
+                    : "h"(sign_16[i]), "r"(i-16));
+        asm volatile("or.b32 "
+                     "{ %0}, "
+                     "{ %1, %2};\n\t"
+                    : "=r"(d[0])
+                    : "r"(d[0]), "r"(sign_32[i]));
+    } */
+
+}
+
 #endif
 

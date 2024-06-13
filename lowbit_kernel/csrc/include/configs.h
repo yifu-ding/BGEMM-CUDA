@@ -57,6 +57,7 @@
 #define BI_ACT_BIT_WIDTH                   1
 #define WARP_M_BIN                          128
 #define WARP_K_BIN                          128
+#define WARP_N_BIN                          32
 #define WEIGHT_PER_UNIT_BIN                 (WARP_M_BIN*WARP_K_BIN)
 #define SMEM_SIZE_IN_BYTES_PER_WARP_BIN     (WEIGHT_PER_UNIT_BIN*BI_WEIGHT_BIT_WIDTH/8/4)
 #define NUM_INT4_PER_UNIT_BIN               (WEIGHT_PER_UNIT_BIN*BI_WEIGHT_BIT_WIDTH/128/4) // int4: 4*32b
@@ -64,6 +65,7 @@
 #define COPY_ACT_LINES_128                  128                  
 #define COPY_WEIGHT_LINES_128               128                  
 #define REG_PER_THREAD_C_TENSOR_16_16_BIN   16  // 
+#define HALF_WEIGHT_PER_UNIT                (WARP_N_BIN*WARP_K_BIN)
 
 template<int BLOCK_ROW_WARPS_, int BLOCK_COL_WARPS_, int WARP_COL_MMA_TENSORS_>  // 4,1,8
 struct TilingConfig {
@@ -77,8 +79,9 @@ struct TilingConfig {
     static constexpr int TILE_M                 = WARP_M * BLOCK_ROW_WARPS; // 64*4
     static constexpr int TILE_N                 = MMA_8  * WARP_COL_MMA_TENSORS * BLOCK_COL_WARPS;
     static constexpr int TILE_K                 = WARP_K;
-    static constexpr int TILE_M_BIN             = 128;
-    static constexpr int TILE_N_BIN             = MMA_16  * WARP_COL_MMA_TENSORS * BLOCK_COL_WARPS; // 16*8*1=128
+    static constexpr int TILE_M_BIN             = 32;
+    // static constexpr int TILE_N_BIN             = MMA_16  * WARP_COL_MMA_TENSORS * BLOCK_COL_WARPS; // 16*8*1=128
+    static constexpr int TILE_N_BIN             = 32;
     static constexpr int TILE_K_BIN             = WARP_K_BIN;
 
     /********************** #Thread per Thread Block **********************/

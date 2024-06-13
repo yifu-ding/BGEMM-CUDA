@@ -9,3 +9,5 @@ kernel_test
 *.egg-info
 .vscode
 *.txt
+_deps
+CMakeFiles

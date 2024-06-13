@@ -13,7 +13,7 @@ extra_compile_args = {
         "-std=c++17",
         "-maxrregcount=255",
         "--ptxas-options=-v,-warn-lmem-usage,--warn-on-spills",
-        "-gencode=arch=compute_80,code=sm_80"
+        "-gencode=arch=compute_86,code=sm_86"
     ],
 }
 
@@ -23,11 +23,11 @@ setup(
     version="0.1",
     author_email="eveedyf@gmail.com",
     description = "A Binary General Matrix Multiply Kernel. ",
-    python_requires=">=3.7",
-    # install_requires=[
-    #     "torch",
-    #     "transformers"
-    # ],
+    python_requires=">=3.8",
+    install_requires=[
+        "torch",
+        "transformers"
+    ],
     packages=find_packages(),
     ext_modules=[
         CUDAExtension(
@@ -35,7 +35,7 @@ setup(
             sources=[
                 "lowbit_kernel/csrc/pybind.cpp", 
                 "lowbit_kernel/csrc/fp6_linear.cu", 
-                "lowbit_kernel/csrc/bgemm.cu",
+                # "lowbit_kernel/csrc/bgemm.cu",
             ],
             extra_compile_args=extra_compile_args,
         ),

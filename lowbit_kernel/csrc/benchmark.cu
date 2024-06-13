@@ -1,16 +1,18 @@
 #include "fp6_linear.cu"
-#include "bgemm.cu"
 #include <cuda.h>
 #include <stdlib.h>
 #include <stdio.h>
-#include "kernel_test.h"
 
-#define SAVE_IO
+// #include "kernel_test.h"
+
+// #define SAVE_IO
 #define BENCHMARK_MODE
+// #define DEBUG_MODE
 
 // bgemm
 int main(int argc, char** argv)
 {
+
     // Parsing the inputs from CLI.
     // int dev = findCudaDevice(argc, (const char **)argv);
     // printf(dev);
@@ -22,6 +24,31 @@ int main(int argc, char** argv)
     size_t K_GLOBAL = atoi(argv[2]);
     size_t N_GLOBAL = atoi(argv[3]);
     int    SPLIT_K  = atoi(argv[4]);
+
+
+    // uint32_t* packed_weights = (uint32_t*) malloc(M_GLOBAL*K_GLOBAL*sizeof(uint32_t)/32);
+    // half* ori_weight = (half*) malloc(M_GLOBAL*K_GLOBAL*sizeof(half));
+    // for(size_t i=0; i<M_GLOBAL*K_GLOBAL; i++)   ori_weight[i] = (rand() % 100 - 50) / 17.0f; 
+   
+    // bin_matrix_prepacking_to_uint32(packed_weights, ori_weight, M_GLOBAL, K_GLOBAL);
+    // #ifdef SAVE_IO
+    //     print_half(ori_weight, "ori_weight", M_GLOBAL, K_GLOBAL);
+    //     print_uint32(packed_weights, "packed_weights", M_GLOBAL, K_GLOBAL);
+    // #endif
+
+    // return 0;
+
+    // #ifndef BENCHMARK_MODE
+    //     auto weight = torch::randn({(signed long) M_GLOBAL, (signed long) K_GLOBAL}, torch::kFloat16);//.to(torch::kCUDA);
+    //     auto feat = torch::randn({(signed long) N_GLOBAL, (signed long) K_GLOBAL}, torch::kFloat16);//.to(torch::kCUDA);
+    //     auto scale = torch::randn({(signed long) M_GLOBAL}, torch::kFloat16);//.to(torch::kCUDA);
+
+    //     auto res = bgemm_linear_forward_cuda(feat, weight, scale, 1);
+
+    //     return 0;
+    // #endif
+
+
     // assert(M_GLOBAL%256==0);                 // Currently, M_GLOBAL must be a multiple of 256.
     // assert(K_GLOBAL%64==0);                  // Currently, K_GLOBAL must be a multiple of 64.
 
@@ -83,17 +110,66 @@ int main(int argc, char** argv)
     cudaMemcpy(B_16bit,             B_16bit_h,          N_GLOBAL*K_GLOBAL*sizeof(half), cudaMemcpyHostToDevice);
     checkLastCudaError(__LINE__);
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-    // B Matrix: Activations
-    /* half* B_h = (half*)malloc(sizeof(half) * K_GLOBAL * N_GLOBAL); CheckMallocCPU(B_h);       // col major 
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    // fp16 matrix initialization for weight and activation
+    half* A_h = (half*)malloc(sizeof(half) *  M_GLOBAL * K_GLOBAL); CheckMallocCPU(A_h);       // col major 
+    for (size_t i = 0; i < M_GLOBAL * K_GLOBAL; i++)
+        A_h[i] = __float2half_rn(static_cast<float>((rand() % 256)) / 256.0f - 0.5f);
+    #ifdef SAVE_IO
+        print_half(A_h,  "A_fp16", M_GLOBAL, K_GLOBAL); 
+    #endif
+    // Device memory
+    half* A            = NULL;
+    cudaMalloc(reinterpret_cast<void**>(&A), sizeof(half) * M_GLOBAL * K_GLOBAL);               CheckMallocCUDA(A, __LINE__);
+    // Memory Copy from CPU to GPU
+    cudaMemcpy(A, A_h, sizeof(half) * M_GLOBAL * K_GLOBAL, cudaMemcpyHostToDevice);
+
+    half* B_h = (half*)malloc(sizeof(half) * K_GLOBAL * N_GLOBAL); CheckMallocCPU(B_h);       // col major 
     for (size_t i = 0; i < N_GLOBAL * K_GLOBAL; i++)
-        B_h[i] = __float2half_rn(static_cast<float>((rand() % 5)) / 5 - 0.5f);
+        B_h[i] = __float2half_rn(static_cast<float>((rand() % 256)) / 256.0f - 0.5f);
+    #ifdef SAVE_IO
+        print_half(B_h,  "B_fp16", M_GLOBAL, K_GLOBAL);
+    #endif
     // Device memory
     half* B            = NULL;
     cudaMalloc(reinterpret_cast<void**>(&B), sizeof(half) * N_GLOBAL * K_GLOBAL);               CheckMallocCUDA(B, __LINE__);
     // Memory Copy from CPU to GPU
-    cudaMemcpy(B, B_h, sizeof(half) * N_GLOBAL * K_GLOBAL, cudaMemcpyHostToDevice); */
+    cudaMemcpy(B, B_h, sizeof(half) * N_GLOBAL * K_GLOBAL, cudaMemcpyHostToDevice);
     checkLastCudaError(__LINE__);
     ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    ////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+    half* A_h_cublas = (half*)malloc(sizeof(half) *  M_GLOBAL * K_GLOBAL);   CheckMallocCPU(A_h_cublas);  
+    half* B_h_cublas = (half*)malloc(sizeof(half) *  K_GLOBAL * N_GLOBAL);   CheckMallocCPU(B_h_cublas);       // col major 
+
+    for (size_t i = 0; i < M_GLOBAL * K_GLOBAL; i++) {
+        if (__half2float(A_h[i]) < 0.0f) {
+            A_h_cublas[i] = __float2half_rn(1.0f);
+        } else {
+            A_h_cublas[i] =  __float2half_rn(0.0f);
+        }
+    } 
+    for (size_t i = 0; i < N_GLOBAL * K_GLOBAL; i++) {
+        if (__half2float(B_h[i]) < 0.0f) {
+            B_h_cublas[i] = __float2half_rn(1.0f);
+        } else {
+            B_h_cublas[i] =  __float2half_rn(0.0f);
+        }
+    } 
+    
+    // Device memory
+    half* A_cublas            = NULL;
+    cudaMalloc(reinterpret_cast<void**>(&A_cublas), sizeof(half) * M_GLOBAL * K_GLOBAL);     CheckMallocCUDA(A_cublas, __LINE__);
+    // Memory Copy from CPU to GPU
+    cudaMemcpy(A_cublas, A_h_cublas, sizeof(half) * M_GLOBAL * K_GLOBAL, cudaMemcpyHostToDevice);
+
+    half* B_cublas            = NULL;
+    cudaMalloc(reinterpret_cast<void**>(&B_cublas), sizeof(half) * N_GLOBAL * K_GLOBAL);     CheckMallocCUDA(B_cublas, __LINE__);
+    // Memory Copy from CPU to GPU
+    cudaMemcpy(B_cublas, B_h_cublas, sizeof(half) * N_GLOBAL * K_GLOBAL, cudaMemcpyHostToDevice);
+
+
     cublasStatus_t cublas_status;
     cudaEvent_t start, stop;
     cudaEventCreate(&start);
@@ -120,8 +196,8 @@ int main(int argc, char** argv)
                                      CUBLAS_OP_T,   CUBLAS_OP_N,
                                      m, n, k,
                                      &alpha,
-                                     A_16bit,   CUDA_R_16F, k,
-                                     B_16bit,   CUDA_R_16F, k,
+                                     A_cublas,   CUDA_R_16F, k,
+                                     B_cublas,   CUDA_R_16F, k,
                                      &beta,
                                      D_cublas,  CUDA_R_16F, m,
                                      CUDA_R_32F,
@@ -134,8 +210,8 @@ int main(int argc, char** argv)
                                      CUBLAS_OP_T,   CUBLAS_OP_N,
                                      m, n, k,
                                      &alpha,
-                                     A_16bit,   CUDA_R_16F, k,
-                                     B_16bit,   CUDA_R_16F, k,
+                                     A_cublas,   CUDA_R_16F, k,
+                                     B_cublas,   CUDA_R_16F, k,
                                      &beta,
                                      D_cublas,  CUDA_R_16F, m,
                                      CUDA_R_32F,
@@ -143,6 +219,7 @@ int main(int argc, char** argv)
     cudaEventRecord(stop); 
     cudaEventSynchronize(stop);
     #endif
+   
     float milliseconds_cublas = 0;
     cudaEventElapsedTime(&milliseconds_cublas, start, stop); 
     milliseconds_cublas = milliseconds_cublas / BENCHMARK_ITERATION;
@@ -154,7 +231,7 @@ int main(int argc, char** argv)
     D_cublas_h       = (half*)malloc(sizeof(half) * M_GLOBAL * N_GLOBAL);   CheckMallocCPU(D_cublas_h);
     cudaMemcpy(D_cublas_h, D_cublas, sizeof(half) * M_GLOBAL * N_GLOBAL, cudaMemcpyDeviceToHost);  // Col Major
     cudaFree(D_cublas);  
-    #endif
+    #endif 
     // print_half(D_cublas_h, "D_cublas_h", M_GLOBAL, N_GLOBAL);
 
     // checkLastCudaError(__LINE__);
@@ -167,8 +244,7 @@ int main(int argc, char** argv)
     float* Reduction_Workspace = NULL;
     cudaMalloc(reinterpret_cast<void**>(&Reduction_Workspace), sizeof(float) * M_GLOBAL * N_GLOBAL * Split_K);   CheckMallocCUDA(Reduction_Workspace, __LINE__);
     //
-
-    for (int i = 0; i < WARM_UP_ITERATION; i++)
+    /* for (int i = 0; i < WARM_UP_ITERATION; i++)
         bin_linear_kernel(  0,
                         (uint4*)A_1bit, A_Scale, B_Scale,
                         (uint32_t*) B_1bit,
@@ -181,6 +257,23 @@ int main(int argc, char** argv)
         bin_linear_kernel(  0,
                         (uint4*) A_1bit, A_Scale, B_Scale,
                         (uint32_t*) B_1bit,
+                        D_bin,
+                        M_GLOBAL, N_GLOBAL, K_GLOBAL,
+                        Reduction_Workspace,  
+                        Split_K); */
+    for (int i = 0; i < WARM_UP_ITERATION; i++)
+        bin_pack_linear_kernel(  0,
+                        A, A_Scale, B_Scale,
+                        B,
+                        D_bin,
+                        M_GLOBAL, N_GLOBAL, K_GLOBAL,
+                        Reduction_Workspace,  
+                        Split_K);
+    cudaEventRecord(start);
+    for (int i = 0; i < BENCHMARK_ITERATION; i++)
+        bin_pack_linear_kernel(  0,
+                        A, A_Scale, B_Scale,
+                        B,
                         D_bin,
                         M_GLOBAL, N_GLOBAL, K_GLOBAL,
                         Reduction_Workspace,  

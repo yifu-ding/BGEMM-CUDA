@@ -101,10 +101,7 @@ __device__ __forceinline__ void CopyFromSharedToRegister_BinaryW(uint32_t (*Reg)
     
     if (NUM_INT_PER_MMA==1){ // 每个线程每次mma用一个int
         #pragma unroll
-        for(int i=0; i<NUM_INT_PER_THREAD; i++) { // 16
-            // int row_id = lane_id / 4;
-            // int col_id = lane_id % 4;
-
+        for(int i=0; i<NUM_INT_PER_THREAD; i++) { // 4
             Reg[i][0] = SPTR[lane_id + i*WARP_SIZE];
         }
     } // error
@@ -121,8 +118,42 @@ __device__ __forceinline__ void CopyFromSharedToRegister_BinaryAct(
     if (NUM_INT_PER_MMA==1){ // 每个线程每次mma用一个int
         #pragma unroll
         for(int i=0; i<NumIterB; i++) { // 4
-//             Reg[i][0] = SPTR[slice_id*4*8 + i][lane_id+i*WARP_SIZE];  
             Reg[i][0] = SPTR[slice_id*NumIterB*8 + i*8 + lane_id/4][lane_id%4];
+        }
+    } // error
+}
+
+
+
+template<int NUM_INT_PER_THREAD, int NUM_INT_PER_MMA> // 4,1
+__device__ __forceinline__ void PackFromSharedToRegister_BinaryW(uint32_t (*Reg)[1], half* SPTR, int slice_id) {
+    // SPTR += slice_id * (NUM_INT_PER_THREAD*WARP_SIZE);  
+    int     lane_id = threadIdx.x % WARP_SIZE;  // threadIdx.x % 32
+    
+    if (NUM_INT_PER_MMA==1){ // 每个线程每次mma用一个int
+        #pragma unroll
+        for(int i=0; i<NUM_INT_PER_THREAD; i++) { // 1 int / thread, 128 uint32, 128*32 half
+            // Reg[i][0] = SPTR[lane_id + i*WARP_SIZE];
+            // SIGN_32_HALF_TO_UINT32(Reg[i], &SPTR[((lane_id*NUM_INT_PER_THREAD + i)*WARP_SIZE)]); // Reg[i][0]是一个uint32, 每线程每次处理32个half->1uint32
+            SIGN_32_HALF_TO_UINT32(Reg[i], &SPTR[(lane_id + i*WARP_SIZE)*32]); // Reg[i][0]是一个uint32, 每线程每次处理32个half->1uint32
+        }
+    } // error
+}
+ 
+template<int NUM_INT_PER_MMA> // 1
+__device__ __forceinline__ void PackFromSharedToRegister_BinaryAct(
+                                                         uint32_t      __restrict__    (*Reg)[1], 
+                                                         half          __restrict__    (*SPTR)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1],
+                                                         int slice_id, 
+                                                         int NumIterB) {
+    // SPTR += slice_id * (4*WARP_SIZE);  // 8*128/32*4 = 128
+    int     lane_id = threadIdx.x % WARP_SIZE;  // 32
+    if (NUM_INT_PER_MMA==1){ // 每个线程每次mma用一个int
+        #pragma unroll
+        for(int i=0; i<NumIterB; i++) { // 1
+            // Reg[i][0] = SPTR[slice_id*NumIterB*8 + i*8 + lane_id/4][lane_id%4]; 
+            // SIGN_32_HALF_TO_UINT32(Reg[i], &SPTR[lane_id][i*WARP_SIZE]); // 32 half -> Reg[i][0]
+            SIGN_32_HALF_TO_UINT32(Reg[i], &SPTR[slice_id*NumIterB*8 + i*8 + lane_id/4][(lane_id%4)*WARP_SIZE]); // 32 half -> Reg[i][0]
         }
     } // error
 }
@@ -145,6 +176,25 @@ __device__ __forceinline__ void initialize_mma_slice_bin(uint32_t               
     CopyFromSharedToRegister_BinaryAct<1>   (b, A_SPTR_read, 0, NumIterB);  // 这里有一点冗余?也可能不是冗余，就是act少于4096个元素时，会有一部分多余的地址被转换
 }
 
+
+template <typename TilingConfig>
+__device__ __forceinline__ void initialize_mma_slice_binpack(uint32_t                  (*a)[1],
+                                                            uint32_t                   (*b)[1],
+                                                            half* __restrict__    W_SPTR_read, // 0x7fffd5000600
+                                                            half   __restrict__  (*A_SPTR_read)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1],
+                                                            const int                        NumIterB)
+{
+    // Writing registers
+    // Registers to store FP6 fragments for a slice (64*16) of A matrix => 32 FP6 per thread => 6 register per thread; （32 threads）
+    // Registers to store binary weights for a slice (64*32) of weight matrix => 64 bin per thread =>  1 register per thread（32 thread）
+    // uint32_t a_t[4];                      // NO double buffer, address for 1 reg
+
+    // 32个线程，每个线程的有一个a[1]，uint32_t是4B，a也就是4*4B的容量。总共初始化了 32*4*4B 的容量，即 4096b 的 weight
+    PackFromSharedToRegister_BinaryW<1, 1>   (a, W_SPTR_read, 0); 
+    PackFromSharedToRegister_BinaryAct<1>    (b, A_SPTR_read, 0, NumIterB);  // 这里有一点冗余?也可能不是冗余，就是act少于4096个元素时，会有一部分多余的地址被转换
+}
+
+
 template <typename TilingConfig>
 __device__ __forceinline__ void core_mma_slice_bin(uint32_t                  c[][REG_PER_THREAD_C_TENSOR_16_16],
                                                uint32_t                  (*a)[1],
@@ -160,7 +210,7 @@ __device__ __forceinline__ void core_mma_slice_bin(uint32_t                  c[]
     #ifdef DEBUG_MODE
         assert((TilingConfig::WARP_COL_MMA_TENSORS==1) || (TilingConfig::WARP_COL_MMA_TENSORS%2==0));   // if WARP_COL_MMA_TENSORS == 1, B tile in registers is padded to a 16*16 MMA block
     #endif
-    // const int NumRegSets_w = 4;                                                                              // 1 set = 4 registers, containing a 16*16 MMA block
+    const int NumRegSets_w = 4;                                                                              // 1 set = 4 registers, containing a 16*16 MMA block
     const int NumRegSets_a = 4; // (TilingConfig::WARP_COL_MMA_TENSORS==1) ? 1 : TilingConfig::WARP_COL_MMA_TENSORS/2;                // 1 set = 4 registers, containing a 16*16 MMA block
     uint32_t (*c_uint_ptr)[REG_PER_THREAD_C_TENSOR_16_16] = reinterpret_cast<uint32_t(*)[REG_PER_THREAD_C_TENSOR_16_16]>(c);    // Reigsters for accumulated FP32 results
     // c_uint_ptr += slice_id * 4*16 * 8*8/8 / 32;  // 除以32线程
@@ -175,7 +225,7 @@ __device__ __forceinline__ void core_mma_slice_bin(uint32_t                  c[]
 
     // Reading registers and issuing core tensor core computations (a slice of A and B tile in shared memory)
     #pragma unroll
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < NumRegSets_w; i++) {
         for (int j = 0; j < NumIterB; j++) {
             MMA_B1B1_M8N8K128_AND( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
         }
@@ -186,6 +236,51 @@ __device__ __forceinline__ void core_mma_slice_bin(uint32_t                  c[]
 //     CopyFromSharedToRegister_BinaryW<4, 1>  (a_write, W_SPTR_read, slice_id);
     CopyFromSharedToRegister_BinaryAct<1>  (b_write, A_SPTR_read, slice_id, NumIterB);
 }
+
+
+
+template <typename TilingConfig>
+__device__ __forceinline__ void core_mma_slice_binpack(uint32_t                  c[][REG_PER_THREAD_C_TENSOR_16_16],
+                                               uint32_t                  (*a)[1],
+                                               uint32_t                  (*b)[1],
+                                               half* __restrict__    W_SPTR_read,
+                                               half __restrict__    (*A_SPTR_read)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1],
+                                            //    half      __restrict__    (*A_SPTR_read)[WARP_K+PADDING_SHARED_MEM_FOR_B_8],
+                                               uint32_t*                 RPTR_Scales_w,
+                                               uint32_t*                 RPTR_Scales_a,
+                                               int                       slice_id,
+                                               const int                       NumIterB)      // writing slice[slice_id] to registers, k=0 -> slice_id=1 for prefetching
+{
+    #ifdef DEBUG_MODE
+        assert((TilingConfig::WARP_COL_MMA_TENSORS==1) || (TilingConfig::WARP_COL_MMA_TENSORS%2==0));   // if WARP_COL_MMA_TENSORS == 1, B tile in registers is padded to a 16*16 MMA block
+    #endif
+    const int NumRegSets_w = 1;                                                                              // 1 set = 4 registers, containing a 16*16 MMA block
+    const int NumRegSets_a = 1; // (TilingConfig::WARP_COL_MMA_TENSORS==1) ? 1 : TilingConfig::WARP_COL_MMA_TENSORS/2;                // 1 set = 4 registers, containing a 16*16 MMA block
+    uint32_t (*c_uint_ptr)[REG_PER_THREAD_C_TENSOR_16_16] = reinterpret_cast<uint32_t(*)[REG_PER_THREAD_C_TENSOR_16_16]>(c);    // Reigsters for accumulated FP32 results
+    // REG_PER_THREAD_C_TENSOR_16_16 = slice_num * 2 = 8
+
+    // Setting RPTRs for double buffers
+    // uint32_t (*a_read )[1] = a;  // 4*1
+    // uint32_t (*a_write)[1] = a; 
+    uint32_t (*b_read )[1] = b;  // 4*1
+    uint32_t (*b_write)[1] = b;
+    if(slice_id%2==1)   { b_write += NumRegSets_a; }
+    else                { b_read  += NumRegSets_a; }
+
+    // Reading registers and issuing core tensor core computations (a slice of A and B tile in shared memory)
+    #pragma unroll
+    for (int i = 0; i < NumRegSets_w; i++) {
+        for (int j = 0; j < NumIterB; j++) {
+            MMA_B1B1_M8N8K128_AND( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
+        }
+    }
+    
+    // Writing registers
+    // Registers to store FP6 fragments for a slice (64*16) of A matrix => 32 FP6 per thread => 6 register per thread;
+//     CopyFromSharedToRegister_BinaryW<4, 1>  (a_write, W_SPTR_read, slice_id);
+    PackFromSharedToRegister_BinaryAct<1>  (b_write, A_SPTR_read, slice_id, NumIterB);
+}
+
 
 #else
 // Old version with naive pipeline design
@@ -301,18 +396,53 @@ __device__ __forceinline__ void StoreToSharedMemoryFromRegister(float (*smem_CFr
 template <typename TilingConfig>
 __device__ __forceinline__ void StoreToSharedMemoryFromRegister(uint32_t (*smem_CFrag)[TilingConfig::TILE_M_BIN+PADDING_SHARED_MEM_FOR_C_0],
                                                                 uint32_t c[][REG_PER_THREAD_C_TENSOR_16_16],
-                                                                int NumIterB)
+                                                                int NumIterB,
+                                                                int NumRegSets_w)
 {
     const int   lane_id             = threadIdx.x % WARP_SIZE;  // 0~31
     const int   warpId              = threadIdx.x / WARP_SIZE;  // 0,1,2,3
     // int         warp_row_offset     = warpId * (MMA_16 * WARP_ROW_MMA_TENSORS);
-    int         warp_row_offset     = warpId * WARP_SIZE; // 
+    int         warp_row_offset     = warpId * WARP_SIZE/4; // [0,1,2,3]*8
     #pragma unroll
-    for (int i = 0; i < 4; i++) {
+    for (int i = 0; i < NumRegSets_w; i++) {
         #pragma unroll
         for (int j = 0; j < NumIterB; j++) {    // Dealing with one 16*8 Tensor
             int RegSetID            = i + j*4;
-            int Tensor_row_offset   = warp_row_offset + i * 8;
+            int Tensor_row_offset   = warp_row_offset + i * 8; // [0,8,16,24 + 0]
+            int Tensor_col_offset   = j * 8;
+            #pragma unroll
+            for (int s = 0; s < REG_PER_THREAD_C_TENSOR_16_16/2; s++) { // s = 0, 1, 2, 3  
+                // int row_offset = lane_id / 4;
+                // if (r >= 2) row_offset += 8;
+                // int col_offset = (lane_id % 4) * 2;
+                // if (r%2==1) col_offset += 1;
+                int col_offset = s * NumIterB * 8 + (lane_id % 4) * 2; // s=0: [0,2,4,6]
+                int row_offset = lane_id / 4;  // [0~7]
+                smem_CFrag[Tensor_col_offset + col_offset][Tensor_row_offset + row_offset] = c[RegSetID][s*2];
+                smem_CFrag[Tensor_col_offset + col_offset + 1][Tensor_row_offset + row_offset] = c[RegSetID][s*2+1];
+            }
+        }
+    }
+}
+
+
+/* 原来的bgemm
+template <typename TilingConfig>
+__device__ __forceinline__ void StoreToSharedMemoryFromRegister(uint32_t (*smem_CFrag)[TilingConfig::TILE_M_BIN+PADDING_SHARED_MEM_FOR_C_0],
+                                                                uint32_t c[][REG_PER_THREAD_C_TENSOR_16_16],
+                                                                int NumIterB,
+                                                                int NumRegSets_w)
+{
+    const int   lane_id             = threadIdx.x % WARP_SIZE;  // 0~31
+    const int   warpId              = threadIdx.x / WARP_SIZE;  // 0,1,2,3
+    // int         warp_row_offset     = warpId * (MMA_16 * WARP_ROW_MMA_TENSORS);
+    int         warp_row_offset     = warpId * WARP_SIZE; // [0,1,2,3]*32
+    #pragma unroll
+    for (int i = 0; i < NumRegSets_w; i++) {
+        #pragma unroll
+        for (int j = 0; j < NumIterB; j++) {    // Dealing with one 16*8 Tensor
+            int RegSetID            = i + j*4;
+            int Tensor_row_offset   = warp_row_offset + i * 8; // 
             int Tensor_col_offset   = j * 8;
             #pragma unroll
             for (int s = 0; s < REG_PER_THREAD_C_TENSOR_16_16/2; s++) { // r = 0, 1, 2, 3  
@@ -328,6 +458,6 @@ __device__ __forceinline__ void StoreToSharedMemoryFromRegister(uint32_t (*smem_
         }
     }
 }
-
+ */
 
 #endif

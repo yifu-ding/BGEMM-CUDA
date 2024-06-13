@@ -129,7 +129,7 @@ __device__ __forceinline__ void CopyFromGlobalToShared_B(uint32_t __restrict__ (
         // GlobalPTR += NumOfGroups * GlobalStride/32; // + 16*K/32
         // SharedPTR += NumOfGroups; // + 16 in dim0
         GPTR_HALF += GlobalStride/32*2*32; 
-        SPTR_HALF += 256;
+        SPTR_HALF += 256; // 32*16B/2  half
     }
 }
 
@@ -201,6 +201,59 @@ __device__ __forceinline__ void CopyFromGlobalToShared(half __restrict__ (*Share
         //
         GlobalPTR += NumOfGroups * GlobalStride;
         SharedPTR += NumOfGroups;
+    }
+}
+
+
+template<int SMEM_SIZE_IN_BYTES_PER_WARP> // 2048 = 128*16B = 128*8 half
+__device__ __forceinline__ void CopyFromGlobalToShared_W(half __restrict__ (*SharedPTR),
+                                                       const half*       GlobalPTR,
+                                                       const int         GlobalStride,  // K_Global
+                                                       const int         NumOfLinesLeft,        // To support arbitrary N dimensions.
+                                                       bool              pred_guard = true) {
+    // runtime variables   
+    const int line_id       = threadIdx.x % WARP_SIZE;
+    // PTR for source global memory and target shared memory
+    // GlobalPTR += line_id*GlobalStride;  
+    GlobalPTR += line_id/4*GlobalStride + line_id % 4 * WARP_SIZE /* column */; // 32 half / thread
+    SharedPTR += line_id*(SMEM_SIZE_IN_BYTES_PER_WARP/WARP_SIZE/2);  // 32 half / thread
+    #pragma unroll
+    for (int i = 0; i < SMEM_SIZE_IN_BYTES_PER_WARP/WARP_SIZE/16; i++) {  // 4 iter
+        // bool AsyncCopyPred = (line_id+i*NumOfGroups) < NumOfLinesLeft && Pred;
+        cp_async<16>( SharedPTR, GlobalPTR, pred_guard);
+        //
+        GlobalPTR += 8; 
+        SharedPTR += 8; 
+    }
+}
+
+template<int MaxNumOfLinesToCopy, int BLOCK_WARPS> // 128, 4
+__device__ __forceinline__ void CopyFromGlobalToShared_A(half __restrict__ (*SharedPTR)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1],
+                                                       const half*       GlobalPTR,
+                                                       const int         GlobalStride,  // K_Global
+                                                       const int         NumOfLinesLeft,        // To support arbitrary N dimensions.
+                                                       bool              Pred = true) {
+    // static parameters: 1 Group (8 Threads) can copy 1 line (64 FP16) each time
+    const int NumOfThreads  = BLOCK_WARPS * WARP_SIZE; // 4*32
+    const int NumOfGroups   = NumOfThreads / 4; // 128/4 = 32
+    const int MaxIteration  = (MaxNumOfLinesToCopy-1) / NumOfGroups + 1; // (128-1) / 32 + 1 = 4
+
+    // runtime variables   
+    const int block_id = threadIdx.x / WARP_SIZE; // [0,1,2,3] // 
+    const int line_id = threadIdx.x % WARP_SIZE;  // [0~31] 
+    const int line_offset = (threadIdx.x%16) * 8;  // 0~120，8B per thread
+    
+    GlobalPTR += (line_id / 16 + block_id * 8) * GlobalStride + line_offset;       // [0,1]+[0, 8, 16, 24] * K_Global + [0~120]
+    SharedPTR += line_id / 16 + block_id * 8;                 // [0,1] + [0, 8, 16, 24] , 每个线程copy 128 half
+    // half* SPTR_HALF = reinterpret_cast<half*>(SharedPTR);
+
+    #pragma unroll
+    for (int i = 0; i < MaxIteration; i++) { // 4*16B*32 = 1024 half
+        // bool AsyncCopyPred = (line_id+i*NumOfGroups) < NumOfLinesLeft && Pred;
+        cp_async<16>( &(*SharedPTR)[line_offset], GlobalPTR, Pred); // 512B 
+        //
+        GlobalPTR += GlobalStride*2; // 2行=2*128half = 2*128*2B = 512B
+        SharedPTR += 2; // 128 half * 2 = 256 half = 512B = 32*16B
     }
 }
 

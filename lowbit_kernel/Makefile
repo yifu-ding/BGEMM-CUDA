@@ -1,6 +1,6 @@
 # host compiler
 HOST_COMPILER ?= g++
-NVCC          := nvcc -ccbin $(HOST_COMPILER) -O0 -g -G
+NVCC          := nvcc -ccbin $(HOST_COMPILER) #-O0 -g -G
 
 # internal flags
 NVCCFLAGS   := -m$(shell getconf LONG_BIT)
@@ -12,7 +12,7 @@ ALL_CCFLAGS += $(NVCCFLAGS)
 ALL_CCFLAGS += $(addprefix -Xcompiler ,$(CCFLAGS))
 
 ################################################################################
-ALL_CCFLAGS += -DNO_PYTORCH
+ALL_CCFLAGS += -DNO_PYTORCH 
 ALL_CCFLAGS += --std=c++17
 ALL_CCFLAGS += -maxrregcount=255
 ALL_CCFLAGS += --use_fast_math
@@ -25,7 +25,6 @@ ALL_LDFLAGS += $(addprefix -Xlinker ,$(LDFLAGS))
 
 # Common includes and paths for CUDA
 INCLUDES  := -I/usr/local/cuda/include/
-# INCLUDES  := -I/usr/local/cuda/include/ 
 LIBRARIES := -lcublas 
 
 # Gencode arguments
@@ -65,15 +64,17 @@ fp6.o: csrc/fp6_llm.cu $(HEAD_FILES)
 fp6: fp6.o
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES) 
 
-bgemm.so: bgemm.o
+bgemm.so: bgemm.o 
 	$(EXEC) $(NVCC) --shared $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
 
 bgemm.o: csrc/benchmark.cu $(HEAD_FILES)
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
-bgemm: bgemm.o
+bgemm: bgemm.o 
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES) 
 
 
 clean:
 	rm -f libfp6.so fp6.o main bgemm fp6 bgemm.so bgemm.o
+
+	

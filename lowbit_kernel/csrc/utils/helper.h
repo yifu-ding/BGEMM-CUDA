@@ -55,8 +55,8 @@ void print_binary(half *inp, const char *array_name, int M, int K) {
     fclose(fp);
 }
 
-void print_uint32(uint32_t *inp, const char *array_name, int M, int K) {
-    /* printf("%s\n", array_name);
+void print_uint32(uint32_t *inp, const char *file_name, int M, int K) {
+    /* printf("%s\n", file_name);
     for (int i=1; i<=M*K/32; ++i) {
         printf("%zu ", (uint32_t) inp[i-1]);
         if (i % (K/32) == 0) printf("\n");
@@ -66,29 +66,32 @@ void print_uint32(uint32_t *inp, const char *array_name, int M, int K) {
     }
     printf("\n"); */
     FILE *fp;//文件指针
-    if (array_name[0] == 'A') {
-        fp = fopen ("A_1bit_bug.txt", "w+");
-    } else {
-        fp = fopen ("B_1bit_bug.txt", "w+");
-    }
+    char *n_str = new char[strlen(file_name)+5];
+    strcpy(n_str, file_name);
+    strcat(n_str, ".txt");
+    fp = fopen (n_str, "w+");
     for (int i=1; i<=M*K/32; ++i) {
         fprintf(fp, "%zu, ", (uint32_t) inp[i-1]);
         if (i % (K/32) == 0) fprintf(fp, "\n");
     }
+    delete [] n_str;
     fclose(fp);
 }
 
 
-void print_half(half *inp, const char *array_name, int M, int N) {
-    printf("%s\n", array_name);
+void print_half(half *inp, const char *file_name, int M, int N) {
+    // printf("%s\n", file_name);
+    FILE *fp;//文件指针
+    char *n_str = new char[strlen(file_name)+5];
+    strcpy(n_str, file_name);
+    strcat(n_str, ".txt");
+    fp = fopen (n_str, "w+");
     for (int i=1; i<=M*N; ++i) {
-        printf("%d ", (int) __half2float(inp[i-1]));
-        if (i % 8 == 0) printf("\n");
-        // if (i % M == 0) {
-        //     printf("\n");  // M elements per row
-        // }
+        fprintf(fp, "%.5f, ", __half2float(inp[i-1]));
+        if (i % N == 0) fprintf(fp, "\n");
     }
-    printf("\n");
+    delete [] n_str;
+    fclose(fp);
 }
 
 
