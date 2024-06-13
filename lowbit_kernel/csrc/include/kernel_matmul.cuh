@@ -373,7 +373,8 @@ __global__ void PACK_BGEMM_Kernel(const half* Weight, const half* S_w, const hal
                                   // const half *Act,
                                   OutputDataType* C,
                                   const size_t M_Global, const size_t N_Global, const size_t K_Global,
-                                  int Split_K) 
+                                  int Split_K,
+                                  int INSTR) 
 {
   #ifdef DEBUG_MODE
     assert(K_Global%TilingConfig::TILE_K_BIN==0);
@@ -449,7 +450,7 @@ __global__ void PACK_BGEMM_Kernel(const half* Weight, const half* S_w, const hal
   uint32_t a  [NumRegSets_w * PIPELINE_LEVEL_SMEM][1];      // double/Trible buffer is used // Registers to store decompressed FP6
   uint32_t b  [NumRegSets_a * PIPELINE_LEVEL_SMEM][1];      // double/Triple buffer is used // Register to store FP16 Act matrix (a slice)
 #endif
-  uint32_t c[NumRegSets_w * NumRegSets_a][REG_PER_THREAD_C_TENSOR_16_16]; // REG_PER_THREAD_C = 2 // 
+  int32_t c[NumRegSets_w * NumRegSets_a][REG_PER_THREAD_C_TENSOR_16_16]; // REG_PER_THREAD_C = 2 // 
   for(int i=0; i<NumRegSets_w * NumRegSets_a; i++) 
     for(int j=0; j<REG_PER_THREAD_C_TENSOR_16_16; j++)
       c[i][j] = 0;
@@ -458,8 +459,8 @@ __global__ void PACK_BGEMM_Kernel(const half* Weight, const half* S_w, const hal
   __syncthreads();
 
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
-  uint32_t Scales_RPTR_w[4]; // 4 Registers per thread for Quantization S_w
-  uint32_t Scales_RPTR_a[4]; // 4 Registers per thread for Quantization S_w
+  int32_t Scales_RPTR_w[4]; // 4 Registers per thread for Quantization S_w
+  int32_t Scales_RPTR_a[4]; // 4 Registers per thread for Quantization S_w
   // ExtractFromSharedToReg_Scales(Scales_RPTR_w, QuantScales_w + WARP_i*64);
   // ExtractFromSharedToReg_Scales(Scales_RPTR_a, QuantScales_a + WARP_i*64);
 #ifdef PIPELINE_LEVEL_SMEM
@@ -499,13 +500,13 @@ __global__ void PACK_BGEMM_Kernel(const half* Weight, const half* S_w, const hal
     uint32_t (*a_read )[1] = a;  // 4*1
     uint32_t (*a_write)[1] = a; 
     if (tile_id_k%2==1) {a_read += NumRegSets_w; } else {a_write += NumRegSets_w;}
-    core_mma_slice_binpack<TilingConfig>(c, a_read, b, read_SPTR_W, read_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  1, NumIterB); // read_SPTR_W, read_SPTR_Frag2 are different for each WARP; read_SPTR is shared among WARPs
-    core_mma_slice_binpack<TilingConfig>(c, a_read, b, read_SPTR_W, read_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  2, NumIterB);
-    core_mma_slice_binpack<TilingConfig>(c, a_read, b, read_SPTR_W, read_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  3, NumIterB);
+    core_mma_slice_binpack<TilingConfig>(c, a_read, b, read_SPTR_W, read_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  1, NumIterB, INSTR); // read_SPTR_W, read_SPTR_Frag2 are different for each WARP; read_SPTR is shared among WARPs
+    core_mma_slice_binpack<TilingConfig>(c, a_read, b, read_SPTR_W, read_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  2, NumIterB, INSTR);
+    core_mma_slice_binpack<TilingConfig>(c, a_read, b, read_SPTR_W, read_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  3, NumIterB, INSTR);
     // Barriers and Synchronizations
     cp_async_wait_group<PIPELINE_LEVEL_GMEM-2>();
     __syncthreads();
-    core_mma_slice_binpack<TilingConfig>(c, a_read, b, read2_SPTR_W, read2_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  0, NumIterB);
+    core_mma_slice_binpack<TilingConfig>(c, a_read, b, read2_SPTR_W, read2_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  0, NumIterB, INSTR);
     PackFromSharedToRegister_BinaryW<1, 1>   (a_write, read2_SPTR_W, 0);
     // Updating global PTRs
     WARP_StartGPTR_W +=  TilingConfig::TILE_K_BIN; // 128 half / block
@@ -525,8 +526,8 @@ __global__ void PACK_BGEMM_Kernel(const half* Weight, const half* S_w, const hal
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
   // Store the C fragments to shared memory.
-  uint32_t (*smem_CFrag) [TilingConfig::TILE_M_BIN+PADDING_SHARED_MEM_FOR_C_0] =
-        reinterpret_cast <uint32_t (*)[TilingConfig::TILE_M_BIN+PADDING_SHARED_MEM_FOR_C_0]> (smem_weight_half);
+  int32_t (*smem_CFrag) [TilingConfig::TILE_M_BIN+PADDING_SHARED_MEM_FOR_C_0] =
+        reinterpret_cast <int32_t (*)[TilingConfig::TILE_M_BIN+PADDING_SHARED_MEM_FOR_C_0]> (smem_weight_half);
   StoreToSharedMemoryFromRegister<TilingConfig>(smem_CFrag, c, NumIterB, NumRegSets_w);
   __syncthreads();
   // Now that shared memory contains all the D tiles, stream them to global memory.
@@ -536,7 +537,7 @@ __global__ void PACK_BGEMM_Kernel(const half* Weight, const half* S_w, const hal
     for(size_t j=threadIdx.x%WARP_SIZE; j<TilingConfig::TILE_M_BIN; j+=WARP_SIZE) // j-th row
     {
       if constexpr (std::is_same<OutputDataType, half>::value) {
-        BlockGlobalPTR[j+i*M_Global] = __uint2half_rn(smem_CFrag[i][j]);
+        BlockGlobalPTR[j+i*M_Global] = __int2half_rn(smem_CFrag[i][j]);
       // } else if constexpr (std::is_same<OutputDataType, float>::value) {                                
       //   BlockGlobalPTR[j+i*M_Global] = __uint2float_rn(smem_CFrag[i][j]);
       } else {

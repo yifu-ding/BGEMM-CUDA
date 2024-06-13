@@ -20,6 +20,7 @@
 #include <assert.h>
 #include "configs.h"
 
+
 #ifdef PIPELINE_LEVEL_SMEM
 template <typename TilingConfig>
 __device__ __forceinline__ void B_FromSharedToReg(uint32_t  __restrict__    Reg[][4],
@@ -179,11 +180,6 @@ MMA_B1B1_M16N8K256(uint32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t
 __device__ __forceinline__ void
 MMA_B1B1_M8N8K128_AND(uint32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
 {
-//     uint32_t const *A = reinterpret_cast<uint32_t const *>(&a);
-//     uint32_t const *B = reinterpret_cast<uint32_t const *>(&b);
-
-//     int const *C = reinterpret_cast<int const *>(&c);
-//     int *D = reinterpret_cast<int *>(&d);
 
     asm volatile(
         "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
@@ -198,13 +194,43 @@ MMA_B1B1_M8N8K128_AND(uint32_t __restrict__ c[], uint32_t __restrict__ *a, uint3
 }
 
 __device__ __forceinline__ void
-MMA_B1B1_M8N8K128_XOR(uint32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
+MMA_B1B1_M8N8K128_AND(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
 {
-//     uint32_t const *A = reinterpret_cast<uint32_t const *>(&a);
-//     uint32_t const *B = reinterpret_cast<uint32_t const *>(&b);
 
-//     int const *C = reinterpret_cast<int const *>(&c);
-//     int *D = reinterpret_cast<int *>(&d);
+    asm volatile(
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n"
+        : "=r"(c[0]), "=r"(c[1])
+        : "r"(a[0]), 
+          "r"(b[0]), 
+          "r"(c[0]), "r"(c[1]));
+}
+
+__device__ __forceinline__ void
+K_SUB_2_XORPOP(int32_t __restrict__ c[], int32_t __restrict__ K)
+{
+
+    asm volatile("{                     \n\t"
+            ".reg .u32      a;          \n\t"
+            "mul.lo.u32     a,2,%1;     \n\t"   // a = 2 * c[0]
+            "sub.s32        %0,%2,a;    \n\t"   // c[0] = K - a = K - 2 * c[0]
+            "}"
+            : "=r"(c[0]) : "r"(c[0]), "r"(K));
+    asm volatile("{                     \n\t"
+            ".reg .u32      a;          \n\t"
+            "mul.lo.u32     a,2,%1;     \n\t"   // a = 2 * c[0]
+            "sub.s32        %0,%2,a;    \n\t"   // c[0] = K - a = K - 2 * c[0]
+            "}"
+            : "=r"(c[1]) : "r"(c[1]), "r"(K));
+
+}
+
+__device__ __forceinline__ void
+MMA_B1B1_M8N8K128_XOR(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
+{
 
     asm volatile(
         "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc "
@@ -252,10 +278,10 @@ SIGN_32_HALF_TO_UINT32(uint32_t __restrict__ d[], half __restrict__ *a)
             asm volatile(
                 "{      \n\t"
                 ".reg .b32 a;                      \n\t" 
-                "mov.b32 a,{%1,%2};                \n\t" // pack 2 half to u32, order: %2%1
+                "mov.b32 a,{%1,%2};                \n\t"  // pack 2 half to u32, order: %2%1
                 "and.b32 a,a,0x80008000;           \n\t"  // sign of two half
-                "shr.b32 a,a,%3;                   \n\t"  // right shift %3 bits and save to c
-                "or.b32  %0,%4,a;                  \n\t"
+                "shr.b32 a,a,%3;                   \n\t"  // a = a >> i
+                "or.b32  %0,%4,a;                  \n\t"  // d[0] = d[0] | a
                 "}"
                 : "=r"(d[0]) : "h"(A[i+16]), "h"(A[i]), "r"(i), "r"(d[0]));
     }

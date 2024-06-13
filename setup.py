@@ -1,3 +1,4 @@
+# pip3 install .
 from setuptools import find_packages, setup
 from torch.utils.cpp_extension import BuildExtension, CUDAExtension, CppExtension
 
@@ -35,7 +36,6 @@ setup(
             sources=[
                 "lowbit_kernel/csrc/pybind.cpp", 
                 "lowbit_kernel/csrc/fp6_linear.cu", 
-                # "lowbit_kernel/csrc/bgemm.cu",
             ],
             extra_compile_args=extra_compile_args,
         ),

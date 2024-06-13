@@ -67,6 +67,10 @@
 #define REG_PER_THREAD_C_TENSOR_16_16_BIN   16  // 
 #define HALF_WEIGHT_PER_UNIT                (WARP_N_BIN*WARP_K_BIN)
 
+#define AND_POP                             0
+#define XOR_POP                             1
+
+
 template<int BLOCK_ROW_WARPS_, int BLOCK_COL_WARPS_, int WARP_COL_MMA_TENSORS_>  // 4,1,8
 struct TilingConfig {
     // Depending on "n" dimension of the GEMM

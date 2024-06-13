@@ -5,9 +5,9 @@
 
 // #include "kernel_test.h"
 
-// #define SAVE_IO
+#define SAVE_IO
 #define BENCHMARK_MODE
-// #define DEBUG_MODE
+#define DEBUG_MODE
 
 // bgemm
 int main(int argc, char** argv)
@@ -145,16 +145,16 @@ int main(int argc, char** argv)
 
     for (size_t i = 0; i < M_GLOBAL * K_GLOBAL; i++) {
         if (__half2float(A_h[i]) < 0.0f) {
-            A_h_cublas[i] = __float2half_rn(1.0f);
+            A_h_cublas[i] = __float2half_rn(-1.0f);
         } else {
-            A_h_cublas[i] =  __float2half_rn(0.0f);
+            A_h_cublas[i] =  __float2half_rn(1.0f);
         }
     } 
     for (size_t i = 0; i < N_GLOBAL * K_GLOBAL; i++) {
         if (__half2float(B_h[i]) < 0.0f) {
-            B_h_cublas[i] = __float2half_rn(1.0f);
+            B_h_cublas[i] = __float2half_rn(-1.0f);
         } else {
-            B_h_cublas[i] =  __float2half_rn(0.0f);
+            B_h_cublas[i] =  __float2half_rn(1.0f);
         }
     } 
     

@@ -240,23 +240,24 @@ __device__ __forceinline__ void core_mma_slice_bin(uint32_t                  c[]
 
 
 template <typename TilingConfig>
-__device__ __forceinline__ void core_mma_slice_binpack(uint32_t                  c[][REG_PER_THREAD_C_TENSOR_16_16],
+__device__ __forceinline__ void core_mma_slice_binpack(int32_t                  c[][REG_PER_THREAD_C_TENSOR_16_16],
                                                uint32_t                  (*a)[1],
                                                uint32_t                  (*b)[1],
                                                half* __restrict__    W_SPTR_read,
                                                half __restrict__    (*A_SPTR_read)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1],
                                             //    half      __restrict__    (*A_SPTR_read)[WARP_K+PADDING_SHARED_MEM_FOR_B_8],
-                                               uint32_t*                 RPTR_Scales_w,
-                                               uint32_t*                 RPTR_Scales_a,
+                                               int32_t*                 RPTR_Scales_w,
+                                               int32_t*                 RPTR_Scales_a,
                                                int                       slice_id,
-                                               const int                       NumIterB)      // writing slice[slice_id] to registers, k=0 -> slice_id=1 for prefetching
+                                               const int                 NumIterB,
+                                               int                      INSTR=AND_POP)      // writing slice[slice_id] to registers, k=0 -> slice_id=1 for prefetching
 {
     #ifdef DEBUG_MODE
         assert((TilingConfig::WARP_COL_MMA_TENSORS==1) || (TilingConfig::WARP_COL_MMA_TENSORS%2==0));   // if WARP_COL_MMA_TENSORS == 1, B tile in registers is padded to a 16*16 MMA block
     #endif
     const int NumRegSets_w = 1;                                                                              // 1 set = 4 registers, containing a 16*16 MMA block
     const int NumRegSets_a = 1; // (TilingConfig::WARP_COL_MMA_TENSORS==1) ? 1 : TilingConfig::WARP_COL_MMA_TENSORS/2;                // 1 set = 4 registers, containing a 16*16 MMA block
-    uint32_t (*c_uint_ptr)[REG_PER_THREAD_C_TENSOR_16_16] = reinterpret_cast<uint32_t(*)[REG_PER_THREAD_C_TENSOR_16_16]>(c);    // Reigsters for accumulated FP32 results
+    int32_t (*c_uint_ptr)[REG_PER_THREAD_C_TENSOR_16_16] = reinterpret_cast<int32_t(*)[REG_PER_THREAD_C_TENSOR_16_16]>(c);    // Reigsters for accumulated FP32 results
     // REG_PER_THREAD_C_TENSOR_16_16 = slice_num * 2 = 8
 
     // Setting RPTRs for double buffers
@@ -268,10 +269,21 @@ __device__ __forceinline__ void core_mma_slice_binpack(uint32_t                 
     else                { b_read  += NumRegSets_a; }
 
     // Reading registers and issuing core tensor core computations (a slice of A and B tile in shared memory)
-    #pragma unroll
-    for (int i = 0; i < NumRegSets_w; i++) {
-        for (int j = 0; j < NumIterB; j++) {
-            MMA_B1B1_M8N8K128_AND( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
+    if (INSTR==AND_POP){
+        #pragma unroll
+        for (int i = 0; i < NumRegSets_w; i++) {
+            for (int j = 0; j < NumIterB; j++) {
+                MMA_B1B1_M8N8K128_AND( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
+                
+            }
+        }
+    } else { // xor.pop
+        #pragma unroll
+        for (int i = 0; i < NumRegSets_w; i++) {
+            for (int j = 0; j < NumIterB; j++) {
+                MMA_B1B1_M8N8K128_XOR( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
+                K_SUB_2_XORPOP(c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, TilingConfig::TILE_K_BIN); // 128
+            }
         }
     }
     
@@ -394,8 +406,8 @@ __device__ __forceinline__ void StoreToSharedMemoryFromRegister(float (*smem_CFr
 }
 
 template <typename TilingConfig>
-__device__ __forceinline__ void StoreToSharedMemoryFromRegister(uint32_t (*smem_CFrag)[TilingConfig::TILE_M_BIN+PADDING_SHARED_MEM_FOR_C_0],
-                                                                uint32_t c[][REG_PER_THREAD_C_TENSOR_16_16],
+__device__ __forceinline__ void StoreToSharedMemoryFromRegister(int32_t (*smem_CFrag)[TilingConfig::TILE_M_BIN+PADDING_SHARED_MEM_FOR_C_0],
+                                                                int32_t c[][REG_PER_THREAD_C_TENSOR_16_16],
                                                                 int NumIterB,
                                                                 int NumRegSets_w)
 {
@@ -426,7 +438,7 @@ __device__ __forceinline__ void StoreToSharedMemoryFromRegister(uint32_t (*smem_
 }
 
 
-/* 原来的bgemm
+// 原来的bgemm
 template <typename TilingConfig>
 __device__ __forceinline__ void StoreToSharedMemoryFromRegister(uint32_t (*smem_CFrag)[TilingConfig::TILE_M_BIN+PADDING_SHARED_MEM_FOR_C_0],
                                                                 uint32_t c[][REG_PER_THREAD_C_TENSOR_16_16],
@@ -458,6 +470,6 @@ __device__ __forceinline__ void StoreToSharedMemoryFromRegister(uint32_t (*smem_
         }
     }
 }
- */
+
 
 #endif

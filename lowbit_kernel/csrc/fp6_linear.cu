@@ -109,7 +109,8 @@ static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
                       const size_t    M_Global,
                       const size_t    N_Global,
                       const size_t    K_Global, 
-                      int             Split_K) 
+                      int             Split_K,
+                      int             INSTR) 
 {   
     #ifdef DEBUG_MODE
         printf("\n");
@@ -133,7 +134,7 @@ static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
         printf("\n");
     #endif
     PACK_BGEMM_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
-                    (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K);
+                    (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
 
     /* cudaDeviceProp deviceProp;
     checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
@@ -282,7 +283,8 @@ cudaError_t bin_pack_linear_kernel(cudaStream_t    stream,
                               const size_t    N_Global,
                               const size_t    K_Global, 
                               float           *Reduction_Workspace,  // Reduction_Workspace_Size = Split_K * M_Global * N_Global * sizeof(fp32)
-                              int             Split_K)
+                              int             Split_K,
+                              int             INSTR=XOR_POP)
 {
     assert(M_Global % 32 == 0);
     assert(K_Global % 128 == 0);
@@ -299,30 +301,30 @@ cudaError_t bin_pack_linear_kernel(cudaStream_t    stream,
 
     if (Split_K == 1) {
         switch (N_PowerOf2) {
-            case 8:     Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K);  break;
-            case 16:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 2>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K);  break;
-            case 32:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 2>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K);  break;
-            case 64:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K);  break;
-            case 128:   Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K);  break;
+            case 8:     Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 16:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 2>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 32:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 2>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 64:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 128:   Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
             default:    if (N_PowerOf2 % 128 != 0) {
                             printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
                             return cudaErrorUnknown;
                         }
-                        Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B,  B, C, M_Global, N_Global, K_Global, Split_K);  break;
+                        Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B,  B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
         }
     }
     else {
         switch (N_PowerOf2) {
-            case 8:     Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 1>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
-            case 16:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 2>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
-            case 32:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 4>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
-            case 64:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
-            case 128:   Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
+            case 8:     Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 1>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 16:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 2>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 32:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 4>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 64:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 128:   Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
             default:    if (N_PowerOf2 % 128 != 0) {
                             printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
                             return cudaErrorUnknown;
                         }
-                        Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
+                        Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
         }
         // Reduction for SplitK
         dim3 GridDim((M_Global * N_Global) / REDUCTION_ELEMENT_PER_THREADBLOCK, 1, 1);
@@ -485,22 +487,22 @@ uint32_t* binary_matrix_prepacking_cpu(torch::Tensor _tensor, torch::TensorOptio
  */
 uint32_t* binary_matrix_prepacking_move_cuda(torch::Tensor _tensor)
 {
-    size_t OC = _tensor.size(0); // M or N
-    size_t IC = _tensor.size(1); // K
+    int OC = _tensor.size(0); // M or N
+    int IC = _tensor.size(1); // K
 
-    auto options = torch::TensorOptions().dtype(_weights.dtype()).device(_weights.device());
-    uint32_t* packed_weights = binary_matrix_prepacking_cpu(_weights, options);  // [OC, IC] == (M, K) 
+    auto options = torch::TensorOptions().dtype(_tensor.dtype()).device(_tensor.device());
+    uint32_t* packed_weights = binary_matrix_prepacking_cpu(_tensor, options);  // [OC, IC] == (M, K) 
 
     #ifdef SAVE_IO
-        auto _weights_ptr = reinterpret_cast<half*>(_weights.data_ptr<at::Half>());
-        print_half(_weights_ptr, "weights_half", num_out_channels, num_in_channels);
-        print_uint32(packed_weights, "packed_weights", num_out_channels, num_in_channels);
+        auto _weights_ptr = reinterpret_cast<half*>(_tensor.data_ptr<at::Half>());
+        print_half(_weights_ptr, "weights_half", OC, IC);
+        print_uint32(packed_weights, "packed_weights", OC, IC);
     #endif
 
     uint32_t* packed_weights_cuda;
-    if (_weights.device() != torch::kCUDA) {
-        cudaMalloc(reinterpret_cast<void**>(&packed_weights_cuda), num_in_channels*num_out_channels*sizeof(uint32_t)/4); CheckMallocCUDA(packed_weights_cuda, __LINE__);
-        cudaMemcpy(packed_weights_cuda,  packed_weights, num_in_channels*num_out_channels*sizeof(uint32_t)/4, cudaMemcpyHostToDevice); 
+    if (_tensor.device() != torch::kCUDA) {
+        cudaMalloc(reinterpret_cast<void**>(&packed_weights_cuda), IC*OC*sizeof(uint32_t)/4); CheckMallocCUDA(packed_weights_cuda, __LINE__);
+        cudaMemcpy(packed_weights_cuda,  packed_weights, IC*OC*sizeof(uint32_t)/4, cudaMemcpyHostToDevice); 
         checkLastCudaError(__LINE__);
     } else {
         packed_weights_cuda = packed_weights;
@@ -512,15 +514,17 @@ uint32_t* binary_matrix_prepacking_move_cuda(torch::Tensor _tensor)
 /* 
 在cuda上，分block并行pack
  */
-torch::Tensor binary_matrix_prepacking_cuda(torch::Tensor _tensor)  // half tensor on cuda
+torch::Tensor binary_weight_prepacking_cuda(torch::Tensor _tensor)  // half tensor on cuda
 {
-    size_t OC = _tensor.size(0); // M or N
-    size_t IC = _tensor.size(1); // K
+    int OC = _tensor.size(0); // M or N
+    int IC = _tensor.size(1); // K
 
-    uint32_t* packed_tensor;
-    cudaMalloc(reinterpret_cast<void**>(&packed_tensor), OC*IC*sizeof(uint32_t)/4); CheckMallocCUDA(packed_tensor, __LINE__);
+    // uint32_t* packed_tensor;
+    auto options = torch::TensorOptions().dtype(at::kInt).device(_tensor.device());
+    at::Tensor packed_int_tensor = torch::empty({OC, (int)(IC/32)}, options);
 
     auto _tensor_ptr = reinterpret_cast<half*>(_tensor.data_ptr<at::Half>());
+    auto packed_int_tensor_ptr = reinterpret_cast<half*>(packed_int_tensor.data_ptr<at::Half>());
 
     // if (_options.dtype()==torch::kFloat32) {
     //     _tensor_ptr = reinterpret_cast<float*>(_tensor.data_ptr<float>());
@@ -530,9 +534,9 @@ torch::Tensor binary_matrix_prepacking_cuda(torch::Tensor _tensor)  // half tens
     //     _tensor_ptr = reinterpret_cast<half*>(_tensor.data_ptr<half>());
     // }
     
-    bin_matrix_prepacking_to_uint32_cuda<4, 1, 1>(packed_tensor, _tensor_ptr, OC, IC);
+    // bin_matrix_prepacking_to_uint32_cuda<4, 1, 1>(packed_tensor, _tensor_ptr, OC, IC);
 
-    return packed_tensor;
+    return packed_int_tensor;
 }
 
 /*
@@ -555,7 +559,8 @@ After Equivalent transformation    :    trans(Out) = W * trans(In). Note that we
 torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,  // half tensor on CUDA
                                         torch::Tensor _weights,   // half tensor on CUDA
                                         torch::Tensor _scales,    // half tensor on CUDA
-                                        int           splitK=1)
+                                        int           splitK=1,
+                                        int           INSTR=XOR_POP)
 {
     int num_in_feats      = _in_feats.size(0);
     int num_in_channels   = _in_feats.size(1);
@@ -578,30 +583,30 @@ torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,  // half tensor
         print_uint32(packed_weights, "packed_weights", num_out_channels, num_in_channels);
         print_uint32(packed_feats, "packed_feats", num_in_feats, num_in_channels); 
     #endif
-
-    uint32_t* packed_weights_cuda;
-    uint32_t* packed_act_cuda;
+    */
+    /* half* weights_cuda;
+    half* feat_cuda;
     if (_weights.device() != torch::kCUDA) {
-        cudaMalloc(reinterpret_cast<void**>(&packed_weights_cuda), num_in_channels*num_out_channels*sizeof(uint32_t)/4); CheckMallocCUDA(packed_weights_cuda, __LINE__);
-        cudaMemcpy(packed_weights_cuda,  packed_weights, num_in_channels*num_out_channels*sizeof(uint32_t)/4, cudaMemcpyHostToDevice); 
+        cudaMalloc(reinterpret_cast<void**>(&weights_cuda), num_in_channels*num_out_channels*sizeof(uint32_t)/4); CheckMallocCUDA(packed_weights_cuda, __LINE__);
+        cudaMemcpy(weights_cuda,  _weights, num_in_channels*num_out_channels*sizeof(uint32_t)/4, cudaMemcpyHostToDevice); 
         checkLastCudaError(__LINE__);
 
         cudaMalloc(reinterpret_cast<void**>(&packed_act_cuda), num_in_feats*num_in_channels*sizeof(uint32_t)/4); CheckMallocCUDA(packed_act_cuda, __LINE__);
         cudaMemcpy(packed_act_cuda,  packed_act, num_in_feats*num_in_channels*sizeof(uint32_t)/4, cudaMemcpyHostToDevice); 
         checkLastCudaError(__LINE__);
     } else {
-        packed_weights_cuda = packed_weights;
-        packed_act_cuda = packed_act;
+        // Input Tensors
+        auto ori_weight = reinterpret_cast<const half*>(_weights.data_ptr<at::Half>());
+        auto ori_feats = reinterpret_cast<const half*>(_in_feats.data_ptr<at::Half>());
     } 
-    */
+     */
 
-    // Input Tensors
-    // auto weight = reinterpret_cast<const uint4*>(_weights.data_ptr<int>());  // weights is [OC, IC] but in FP6.
-    // auto in_feats = reinterpret_cast<const half*>(_in_feats.data_ptr<at::Half>());
+    auto ori_weight = reinterpret_cast<const half*>(_weights.data_ptr<at::Half>());
+    auto ori_feats = reinterpret_cast<const half*>(_in_feats.data_ptr<at::Half>());
     auto scales = reinterpret_cast<half*>(_scales.data_ptr<at::Half>());
     
     // Output Tensors
-    options = torch::TensorOptions().dtype(_in_feats.dtype()).device(torch::kCUDA);
+    auto options = torch::TensorOptions().dtype(_in_feats.dtype()).device(torch::kCUDA);
     at::Tensor _out_feats = torch::empty({num_in_feats, num_out_channels}, options);
     auto out_feats = reinterpret_cast<half*>(_out_feats.data_ptr<at::Half>());
 
@@ -614,17 +619,18 @@ torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,  // half tensor
     int N = num_in_feats;
     
     // All tensors should be on CUDA Mem before bin_linear_kernel. 
-    bin_linear_kernel(0, // Using default stream here.
-                      (uint4*)packed_weights_cuda,
+    bin_pack_linear_kernel(0, // Using default stream here.
+                      (half*)ori_weight,
                       scales,
                       scales, 
-                      (uint32_t*)packed_act_cuda,
+                      (half*)ori_feats,
                       out_feats,
                       M,
                       N,
                       K, 
                       Reduction_Workspace,  
-                      splitK);
+                      splitK,
+                      INSTR);
 
     #ifdef SAVE_IO
         half* out_feats_h = NULL;  // col major
