@@ -11,3 +11,4 @@ kernel_test
 *.txt
 _deps
 CMakeFiles
+*.npz

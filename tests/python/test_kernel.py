@@ -4,8 +4,8 @@ import lowbit_kernel
 
 WARMUP = 10
 REPEAT = 1000
-AND_POP = 0
-XOR_POP = 1
+AND_POP = 0    # use mma.and.pop instruction
+XOR_POP = 1    # use mma.xor.pop instruction
 
 parser = argparse.ArgumentParser(description='The shape of the MatMul: (M, K)*(K, N)->(M, N).')
 parser.add_argument('--OC',        type=int, required=False,     default=352,   help='number of rows of the weight matrix.')
@@ -20,7 +20,7 @@ assert(args.BS%32==0)
 
 print(args)
 
-fp16_scale = (torch.rand(args.OC).to(torch.half)+0.5).cuda()
+# fp16_scale = (torch.rand(args.OC).to(torch.half)+0.5).cuda()   // TODO
 fp16_activation = torch.randn(args.BS, args.IC).to(torch.half).cuda()
 fp16_weight = torch.randn(args.OC, args.IC).to(torch.half).cuda()
 
@@ -30,13 +30,13 @@ end_event = torch.cuda.Event(enable_timing=True)
 # BGEMM
 ####################################################################################################################################
 torch.cuda.synchronize()
-bgemm_res = lowbit_kernel.bgemm_linear_forward_cuda(fp16_activation, fp16_weight, fp16_scale, 1, XOR_POP) # [B, OC]
+bgemm_res = lowbit_kernel.bgemm_linear_forward_cuda(fp16_activation, fp16_weight, 1, XOR_POP) # [B, OC]
 
 for i in range(WARMUP):
-    results_lowbit_kernel = lowbit_kernel.bgemm_linear_forward_cuda(fp16_activation, fp16_weight, fp16_scale, 1, XOR_POP)
+    results_lowbit_kernel = lowbit_kernel.bgemm_linear_forward_cuda(fp16_activation, fp16_weight, 1, XOR_POP)
 start_event.record()
 for i in range(REPEAT):
-    results_lowbit_kernel = lowbit_kernel.bgemm_linear_forward_cuda(fp16_activation, fp16_weight, fp16_scale, 1, XOR_POP)
+    results_lowbit_kernel = lowbit_kernel.bgemm_linear_forward_cuda(fp16_activation, fp16_weight, 1, XOR_POP)
 end_event.record()
 torch.cuda.synchronize()
 lowbit_kernel_time_ms = start_event.elapsed_time(end_event)/REPEAT
@@ -77,22 +77,3 @@ mean_error        = torch.mean(abs(error))
 mean_ground_truth = torch.mean(abs(ground_truth))
 relative_error    = mean_error.item()/mean_ground_truth.item()
 print( "relative error: {:.6f}".format(relative_error) )
-
-
-
-# 001100 001100 001100 001100 001100 001100 001100 001100 001100 001100 001100 001100 001100 001100 001100 001100 
-# "00110000110000110000110000110000"       "11000011000011000011000011000011"     "00001100001100001100001100001100"
-# 818089008                                 3272356035                              204522252
-#fp6_weight = torch.zeros(args.OC, args.IC//16*3).to(torch.int64)
-#for i in range(args.OC):
-#    for j in range(args.IC//16):
-#        fp6_weight[i][j*3+0] = 818089008
-#        fp6_weight[i][j*3+1] = 3272356035 
-#        fp6_weight[i][j*3+2] = 204522252
-#fp6_weight = fp6_weight.to(torch.int)
-
-# Ensuring that the absolute error or relative error of each matrix element is smaller than 1e-3.
-#Error = [1e-2]  
-#for err in Error:
-#    AllClose = torch.allclose(results_lowbit_kernel.cpu(), results_cublas.cpu(), rtol=err, atol=err, equal_nan=True)
-#    print("torch.allclose\t (relative/absolute_error<" + str(err) + ") \t-> " + str(AllClose))

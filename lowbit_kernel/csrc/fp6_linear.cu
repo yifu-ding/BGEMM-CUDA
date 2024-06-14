@@ -274,8 +274,8 @@ cudaError_t bin_linear_kernel(cudaStream_t    stream,
 
 cudaError_t bin_pack_linear_kernel(cudaStream_t    stream,
                               const half     *Weight,  // 4B = 4 * 8b
-                              const half      *Scales,  // 16b
-                              const half      *Scales_B,  // 16b
+                            //   const half      *Scales,  // 16b
+                            //   const half      *Scales_B,  // 16b
                             //   const half      *B,
                               const half     *B,  // 4B = 4 * 8b
                               half            *C,
@@ -298,6 +298,9 @@ cudaError_t bin_pack_linear_kernel(cudaStream_t    stream,
     if(N_Global>32 && N_Global<=64)     N_PowerOf2 = 64;
     if(N_Global>64 && N_Global<=128)    N_PowerOf2 = 128;
     if(N_Global>128)                    N_PowerOf2 = ((N_Global-1)/128+1) * 128;
+
+    half *Scales = NULL;  // TODO
+    half *Scales_B = NULL;  // TODO
 
     if (Split_K == 1) {
         switch (N_PowerOf2) {
@@ -558,7 +561,7 @@ After Equivalent transformation    :    trans(Out) = W * trans(In). Note that we
 
 torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,  // half tensor on CUDA
                                         torch::Tensor _weights,   // half tensor on CUDA
-                                        torch::Tensor _scales,    // half tensor on CUDA
+                                        // torch::Tensor _scales,    // half tensor on CUDA
                                         int           splitK=1,
                                         int           INSTR=XOR_POP)
 {
@@ -569,41 +572,9 @@ torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,  // half tensor
     assert (num_in_channels%128==0); // K % 128 == 0
     assert (num_in_channels == _weights.size(1));  // Making sure the K dimension is matched.
 
-    /* 
-    auto options = torch::TensorOptions().dtype(_weights.dtype()).device(_weights.device());
-    uint32_t* packed_weights = binary_matrix_prepacking_cpu(_weights, options);  // [OC, IC] == (M, K) 
-    options = torch::TensorOptions().dtype(_in_feats.dtype()).device(_in_feats.device());
-    uint32_t* packed_act = binary_matrix_prepacking_cpu(_in_feats, options);
-
-    #ifdef SAVE_IO
-        auto _in_feats_ptr = reinterpret_cast<half*>(_in_feats.data_ptr<at::Half>());
-        print_half(_in_feats_ptr, "in_feats_half", num_in_feats, num_in_channels); 
-        auto _weights_ptr = reinterpret_cast<half*>(_weights.data_ptr<at::Half>());
-        print_half(_weights_ptr, "weights_half", num_out_channels, num_in_channels);
-        print_uint32(packed_weights, "packed_weights", num_out_channels, num_in_channels);
-        print_uint32(packed_feats, "packed_feats", num_in_feats, num_in_channels); 
-    #endif
-    */
-    /* half* weights_cuda;
-    half* feat_cuda;
-    if (_weights.device() != torch::kCUDA) {
-        cudaMalloc(reinterpret_cast<void**>(&weights_cuda), num_in_channels*num_out_channels*sizeof(uint32_t)/4); CheckMallocCUDA(packed_weights_cuda, __LINE__);
-        cudaMemcpy(weights_cuda,  _weights, num_in_channels*num_out_channels*sizeof(uint32_t)/4, cudaMemcpyHostToDevice); 
-        checkLastCudaError(__LINE__);
-
-        cudaMalloc(reinterpret_cast<void**>(&packed_act_cuda), num_in_feats*num_in_channels*sizeof(uint32_t)/4); CheckMallocCUDA(packed_act_cuda, __LINE__);
-        cudaMemcpy(packed_act_cuda,  packed_act, num_in_feats*num_in_channels*sizeof(uint32_t)/4, cudaMemcpyHostToDevice); 
-        checkLastCudaError(__LINE__);
-    } else {
-        // Input Tensors
-        auto ori_weight = reinterpret_cast<const half*>(_weights.data_ptr<at::Half>());
-        auto ori_feats = reinterpret_cast<const half*>(_in_feats.data_ptr<at::Half>());
-    } 
-     */
-
     auto ori_weight = reinterpret_cast<const half*>(_weights.data_ptr<at::Half>());
     auto ori_feats = reinterpret_cast<const half*>(_in_feats.data_ptr<at::Half>());
-    auto scales = reinterpret_cast<half*>(_scales.data_ptr<at::Half>());
+    // auto scales = reinterpret_cast<half*>(_scales.data_ptr<at::Half>());
     
     // Output Tensors
     auto options = torch::TensorOptions().dtype(_in_feats.dtype()).device(torch::kCUDA);
@@ -621,8 +592,8 @@ torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,  // half tensor
     // All tensors should be on CUDA Mem before bin_linear_kernel. 
     bin_pack_linear_kernel(0, // Using default stream here.
                       (half*)ori_weight,
-                      scales,
-                      scales, 
+                    //   scales,
+                    //   scales, 
                       (half*)ori_feats,
                       out_feats,
                       M,
