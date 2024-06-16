@@ -16,9 +16,9 @@ cd .. && pip3 install .
 ## Speed and correctness test
 ```sh
 cd tests/python
-python3 test_kernel.py
-cd tests/cpp
-
+python3 test_kernel.py  # directly test GEMM loops
+# cd tests/cpp
+python3 test_model_demo.py --model=[bnn_bgemm, bnn_fp16, fp16]  # tiny training demo of a 3-layer MLP
 ```
 
 
