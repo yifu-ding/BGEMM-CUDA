@@ -2,13 +2,15 @@
 
 # Batch sizes to test
 # N=(1 2 3 4 5 6 7 8)
-N=(1)
+N=(32 32 64 64)
 
 # Benchmarking the specific Matrix Shape from llama-1 65b
-M=(13824 5120  22016 8192)
-K=(5120  13824 8192  22016)
+# M=(13824 5120  22016 8192)
+# K=(5120  13824 8192  22016)
+M=(32 64 128 256)
+K=(128 128 128 128)
 # SplitK=(4 10 5 6)      # SplitK for smaller Batch Sizes
-SplitK=(4)      # SplitK for smaller Batch Sizes
+SplitK=(1)      # SplitK for smaller Batch Sizes
 
 
 # Benchmarking Matrix Shapes from OPT models 
@@ -35,6 +37,6 @@ do
     do
         echo "BS=${BS}"
         #ncu -f -o Profiling/M${M[i]}K${K[i]}N${BS} --set full \
-        ./kernel_test ${M[i]} ${K[i]} ${BS} ${SplitK[i]}  
+        ./bgemm ${M[i]} ${K[i]} ${BS} ${SplitK[i]}  
     done
 done

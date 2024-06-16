@@ -268,21 +268,23 @@ __device__ __forceinline__ void core_mma_slice_binpack(int32_t                  
     if(slice_id%2==1)   { b_write += NumRegSets_a; }
     else                { b_read  += NumRegSets_a; }
 
+    
+
     // Reading registers and issuing core tensor core computations (a slice of A and B tile in shared memory)
     if (INSTR==AND_POP){
         #pragma unroll
         for (int i = 0; i < NumRegSets_w; i++) {
             for (int j = 0; j < NumIterB; j++) {
                 MMA_B1B1_M8N8K128_AND( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
-                
             }
         }
     } else { // xor.pop
         #pragma unroll
         for (int i = 0; i < NumRegSets_w; i++) {
             for (int j = 0; j < NumIterB; j++) {
-                MMA_B1B1_M8N8K128_XOR( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
-                K_SUB_2_XORPOP(c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, TilingConfig::TILE_K_BIN); // 128
+                int32_t tmp_c[2];  // 
+                MMA_B1B1_M8N8K128_XOR( tmp_c, a[i], b_read[j] );
+                K_SUB_2_XORPOP(c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, tmp_c, TilingConfig::TILE_K_BIN); // 128
             }
         }
     }
@@ -429,7 +431,7 @@ __device__ __forceinline__ void StoreToSharedMemoryFromRegister(int32_t (*smem_C
                 // int col_offset = (lane_id % 4) * 2;
                 // if (r%2==1) col_offset += 1;
                 int col_offset = s * NumIterB * 8 + (lane_id % 4) * 2; // s=0: [0,2,4,6]
-                int row_offset = lane_id / 4;  // [0~7]
+                int row_offset = lane_id / 4;  // [0~7]  
                 smem_CFrag[Tensor_col_offset + col_offset][Tensor_row_offset + row_offset] = c[RegSetID][s*2];
                 smem_CFrag[Tensor_col_offset + col_offset + 1][Tensor_row_offset + row_offset] = c[RegSetID][s*2+1];
             }

@@ -11,7 +11,19 @@ from tqdm import tqdm, trange
 from torch.utils.data import TensorDataset
 from torch.utils.data import DataLoader, Dataset
 import pdb
+import random
+import os
 
+def seed_all(seed=1029):
+    random.seed(seed)
+    os.environ['PYTHONHASHSEED'] = str(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)  # if you are using multi-GPU.
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.deterministic = True
+    
 def train(model, train_loader, optimizer, criterion, device, dtype=torch.float):
     losses = []
     # ensure model is in training mode
@@ -24,8 +36,8 @@ def train(model, train_loader, optimizer, criterion, device, dtype=torch.float):
                 
         # forward pass
         output = model(inputs.to(dtype))
-        # import pdb; pdb.set_trace()
         loss = criterion(output, target.unsqueeze(1))
+        # import pdb; pdb.set_trace()
         
         # backward pass + run optimizer to update weights
         loss.backward()
@@ -33,7 +45,7 @@ def train(model, train_loader, optimizer, criterion, device, dtype=torch.float):
         
         # keep track of loss value
         losses.append(loss.data.cpu().numpy()) 
-           
+
     return losses
 
 
@@ -102,6 +114,7 @@ class MLP(nn.Module):
         self.lin1 = nn.Linear(input_size, hidden1, bias=bias)
         self.lin2 = Linear(hidden1, hidden2, bias=bias)
         self.lin3 = Linear(hidden2, hidden3, bias=bias)
+        # self.lin2.weight = nn.Parameter()
         
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(0.5)
@@ -134,7 +147,7 @@ class MLP(nn.Module):
     
 def main():
     # Setting seeds for reproducibility
-    torch.manual_seed(0)
+    seed_all(0)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Target device: " + str(device))
     assert device == torch.device("cuda"), "cannot use bgemm_linear without cuda."
@@ -160,7 +173,7 @@ def main():
     
     # define training settings
     num_epochs = 10
-    lr = 0.001 
+    lr = 0.0001
     # loss criterion and optimizer
     criterion = nn.BCEWithLogitsLoss().to(device)
     optimizer = torch.optim.Adam(mlp.parameters(), lr=lr, betas=(0.9, 0.999))

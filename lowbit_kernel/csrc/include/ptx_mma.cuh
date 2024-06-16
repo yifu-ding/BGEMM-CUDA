@@ -210,27 +210,31 @@ MMA_B1B1_M8N8K128_AND(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32
 }
 
 __device__ __forceinline__ void
-K_SUB_2_XORPOP(int32_t __restrict__ c[], int32_t __restrict__ K)
+K_SUB_2_XORPOP(int32_t __restrict__ c[], int32_t __restrict__ tmp[], int32_t __restrict__ K)
 {
 
     asm volatile("{                     \n\t"
-            ".reg .u32      a;          \n\t"
-            "mul.lo.u32     a,2,%1;     \n\t"   // a = 2 * c[0]
-            "sub.s32        %0,%2,a;    \n\t"   // c[0] = K - a = K - 2 * c[0]
+            ".reg .s32      a;          \n\t"
+            "mul.lo.s32     a,2,%1;     \n\t"   // a = 2 * tmp[0]
+            "sub.s32        a,%2,a;     \n\t"   // a = K - a = K - 2 * tmp[0]
+            "add.s32        %0,%0,a;    \n\t"   // c[0] = c[0] + a
             "}"
-            : "=r"(c[0]) : "r"(c[0]), "r"(K));
+            : "+r"(c[0]) : "r"(tmp[0]), "r"(K));
     asm volatile("{                     \n\t"
-            ".reg .u32      a;          \n\t"
-            "mul.lo.u32     a,2,%1;     \n\t"   // a = 2 * c[0]
-            "sub.s32        %0,%2,a;    \n\t"   // c[0] = K - a = K - 2 * c[0]
+            ".reg .s32      a;          \n\t"
+            "mul.lo.s32     a,2,%1;     \n\t"   // a = 2 * tmp[1]
+            "sub.s32        a,%2,a;     \n\t"   // c[0] = K - a = K - 2 * tmp[1]
+            "add.s32        %0,%0,a;    \n\t"   // c[0] = c[0] + a
             "}"
-            : "=r"(c[1]) : "r"(c[1]), "r"(K));
+            : "+r"(c[1]) : "r"(tmp[1]), "r"(K));
 
 }
 
 __device__ __forceinline__ void
 MMA_B1B1_M8N8K128_XOR(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
-{
+{   
+    // asm volatile("mov.b32 %0,0x0; \n\t": "=r"(c[0]));
+    // asm volatile("mov.b32 %0,0x0; \n\t": "=r"(c[1]));
 
     asm volatile(
         "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc "
@@ -240,8 +244,9 @@ MMA_B1B1_M8N8K128_XOR(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32
         "{%4,%5};\n"
         : "=r"(c[0]), "=r"(c[1])
         : "r"(a[0]), 
-          "r"(b[0]), 
-          "r"(c[0]), "r"(c[1]));
+          "r"(b[0]),
+          "r"(0x0), "r"(0x0));
+        //   "r"(c[0]), "r"(c[1]));
 }
 
 

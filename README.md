@@ -10,7 +10,17 @@ This is a repository for Binary General Matrix Multiply (BGEMM) by customized CU
 
 ```sh
 cd lowbit_kernel && make bgemm
+cd .. && pip3 install .
 ```
+
+## Speed and correctness test
+```sh
+cd tests/python
+python3 test_kernel.py
+cd tests/cpp
+
+```
+
 
 ## Performance
 

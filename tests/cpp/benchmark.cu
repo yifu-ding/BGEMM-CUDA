@@ -5,9 +5,9 @@
 
 // #include "kernel_test.h"
 
-// #define SAVE_IO
+#define SAVE_IO
 #define BENCHMARK_MODE
-// #define DEBUG_MODE
+#define DEBUG_MODE
 
 // bgemm
 int main(int argc, char** argv)
@@ -262,7 +262,6 @@ int main(int argc, char** argv)
                         Reduction_Workspace,  
                         Split_K); */
     for (int i = 0; i < WARM_UP_ITERATION; i++)
-    {
         bin_pack_linear_kernel(  0,
                         A, // A_Scale, B_Scale,
                         B,
@@ -270,8 +269,6 @@ int main(int argc, char** argv)
                         M_GLOBAL, N_GLOBAL, K_GLOBAL,
                         Reduction_Workspace,  
                         Split_K);
-        printf("WARM_UP_ITERATION i=%d", i);
-    }
     cudaEventRecord(start);
     for (int i = 0; i < BENCHMARK_ITERATION; i++)
         bin_pack_linear_kernel(  0,

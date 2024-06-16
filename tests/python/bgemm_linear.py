@@ -44,15 +44,24 @@ class BGEMMLinear(nn.Linear):
     def __init__(self, in_channels, out_channels, bias=True):
         super(BGEMMLinear, self).__init__(in_channels, out_channels, bias)
         # self.sw = nn.Parameter(torch.randn(out_channels), requires_grad=True)
+        self.initialized = False
+    
+    def _initialize(self, x, w):
+        assert not self.initialized, 'already initialized.'
+        self.sw = nn.Parameter(w.norm(1, 1).div(w.nelement()), requires_grad=True)
+        self.sa = nn.Parameter(2 * x.abs().mean() , requires_grad=True)
+        self.zpw = 0  # nn.Parameter(torch.mean(w), requires_grad=False)
+        self.zpa = 0.5 # nn.Parameter(torch.mean(x), requires_grad=False)
         
     def forward(self, x):
         assert x.shape[0] % 32 == 0, "x.shape[0] is %d" % x.shape[0]
+        if not self.initialized:
+            self._initialize(x, self.weight)
 
-        w = self.weight
-
-        # alpha = torch.mean(w, dim=(1), keepdim=True).detach()
-        # w = self.sw * w
-        out = bgemm_linear.apply(x, w)
+        w = self.weight - self.zpw
+        x = x - self.zpa
+        # import pdb; pdb.set_trace()
+        out = bgemm_linear.apply(x, w) * self.sw * self.sa
         if not self.bias is None:
             out += self.bias.view(1, -1).expand_as(out)
 
@@ -87,10 +96,12 @@ class BNNLinear(nn.Linear):
 
         bw = BinActive().apply(w)
         bx = BinActive().apply(x)
+        # import pdb; pdb.set_trace()
 
         output = nn.functional.linear(bx, bw, self.bias)
+        out = bx @ bw.T + self.bias
 
-        return output
+        return out
     
 
 class test_linear(torch.autograd.Function):
@@ -134,10 +145,12 @@ class TestLinear(nn.Linear):
         w = self.weight
         # bgemm
         out = bgemm_linear.apply(x, w)
+        
         # bnn
-        x = BinActive.apply(x)
-        w = BinActive.apply(w)
-        out = nn.functional.linear(x, w)
+        # x = BinActive.apply(x)
+        # w = BinActive.apply(w)
+        # out = nn.functional.linear(x, w)
+        import pdb; pdb.set_trace()
         
         if not self.bias is None:
             out += self.bias.view(1, -1).expand_as(out)
@@ -152,16 +165,18 @@ def main():
     criterion = nn.BCEWithLogitsLoss()
 
     mlp = nn.Sequential(
-        linear(4, 3, False),
+        linear(128, 128, False),
         nn.ReLU(),
-        linear(3, 1, False),
+        linear(128, 128, False),
     )
+    
+    mlp = mlp.cuda()
     
     # x = torch.randn(8, 2, 4)
     # y = torch.randn(8, 2)
     
-    x = torch.randn(2, 4)
-    y = torch.randn(2)
+    x = torch.randn(128, 128).cuda()
+    y = torch.randn(512).cuda()
     
     
     out = mlp(x)
@@ -171,7 +186,7 @@ def main():
     # import pdb; pdb.set_trace()
     
     loss.backward()
-    import pdb; pdb.set_trace()
+    # import pdb; pdb.set_trace()
     
     
 # main()

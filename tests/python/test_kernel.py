@@ -8,9 +8,9 @@ AND_POP = 0    # use mma.and.pop instruction
 XOR_POP = 1    # use mma.xor.pop instruction
 
 parser = argparse.ArgumentParser(description='The shape of the MatMul: (M, K)*(K, N)->(M, N).')
-parser.add_argument('--OC',        type=int, required=False,     default=352,   help='number of rows of the weight matrix.')
+parser.add_argument('--OC',        type=int, required=False,     default=800,   help='number of rows of the weight matrix.')
 parser.add_argument('--IC',        type=int, required=False,     default=128,   help='number of columns of the weight matrix.')
-parser.add_argument('--BS',        type=int, required=False,     default=32,     help='inference batch size.')
+parser.add_argument('--BS',        type=int, required=False,     default=128,     help='inference batch size.')
 parser.add_argument('--splitK',    type=int, required=False,     default=1,      help='Split-K parameters allow users to split the GEMM computation along the K dimension so that more CTAs will be created with a better SM utilization.')
 args = parser.parse_args()
 
@@ -62,7 +62,7 @@ torch.cuda.synchronize()
 cublas_time_ms = start_event.elapsed_time(end_event)/REPEAT
 cublas_tflops  = args.OC*args.IC*args.BS*2/cublas_time_ms/1e9
 ####################################################################################################################################
-
+import pdb; pdb.set_trace()
 # Performance
 print( 'cuBLAS  time: {:.5f} ms \t\t cuBLAS TFLOPs: {:.5f}'.format(cublas_time_ms,  cublas_tflops) )
 print( 'BGEMM time: {:.5f} ms \t\t BGEMM TFLOPs: {:.5f}'.format(lowbit_kernel_time_ms, lowbit_kernel_tflops) )

@@ -114,7 +114,7 @@ static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
 {   
     #ifdef DEBUG_MODE
         printf("\n");
-        printf("Launcher.cu->Kernel_Ex_Bin():\n");
+        printf("Launcher.cu->Kernel_Ex_W1A1_Pack_MM():\n");
         printf("M: %d, N: %d, K: %d, SplitK: %d\n", M_Global, N_Global, K_Global, Split_K);
         printf("TILE_M_BIN: %d, TILE_K_BIN: %d, TILE_N_BIN: %d\n", TilingConfig::TILE_M_BIN, TilingConfig::TILE_K_BIN, TilingConfig::TILE_N_BIN);
         // printf("Weight: %u\n", Weight);
@@ -276,7 +276,6 @@ cudaError_t bin_pack_linear_kernel(cudaStream_t    stream,
                               const half     *Weight,  // 4B = 4 * 8b
                             //   const half      *Scales,  // 16b
                             //   const half      *Scales_B,  // 16b
-                            //   const half      *B,
                               const half     *B,  // 4B = 4 * 8b
                               half            *C,
                               const size_t    M_Global,
@@ -305,8 +304,8 @@ cudaError_t bin_pack_linear_kernel(cudaStream_t    stream,
     if (Split_K == 1) {
         switch (N_PowerOf2) {
             case 8:     Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
-            case 16:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 2>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
-            case 32:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 2>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 16:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            case 32:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
             case 64:    Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
             case 128:   Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
             default:    if (N_PowerOf2 % 128 != 0) {
