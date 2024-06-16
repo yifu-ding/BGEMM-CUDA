@@ -18,6 +18,8 @@ class bgemm_linear(torch.autograd.Function):
         """
         input = input.to(torch.half)
         weight = weight.to(torch.half)
+        assert input.dtype == torch.half and weight.dtype == torch.half
+
         ctx.save_for_backward(input, weight)
         INSTRUCTION = 0 if instruction=='and' else 1 # 1 by default
         out = lowbit_kernel.bgemm_linear_forward_cuda(input, weight, 1, INSTRUCTION)  
@@ -43,7 +45,6 @@ class BGEMMLinear(nn.Linear):
 
     def __init__(self, in_channels, out_channels, bias=True):
         super(BGEMMLinear, self).__init__(in_channels, out_channels, bias)
-        # self.sw = nn.Parameter(torch.randn(out_channels), requires_grad=True)
         self.initialized = False
     
     def _initialize(self, x, w):
@@ -90,16 +91,26 @@ class BNNLinear(nn.Linear):
 
     def __init__(self, in_channels, out_channels, bias=False):
         super(BNNLinear, self).__init__(in_channels, out_channels, bias)
+        self.initialized = False
 
+    def _initialize(self, x, w):
+        assert not self.initialized, 'already initialized.'
+        self.sw = nn.Parameter(w.norm(1, 1).div(w.nelement()), requires_grad=True)
+        self.sa = nn.Parameter(2 * x.abs().mean() , requires_grad=True)
+        self.zpw = 0  # nn.Parameter(torch.mean(w), requires_grad=False)
+        self.zpa = 0.5 # nn.Parameter(torch.mean(x), requires_grad=False)
+        
     def forward(self, x):
+        if not self.initialized:
+            self._initialize(x, self.weight)
+            
         w = self.weight
 
-        bw = BinActive().apply(w)
-        bx = BinActive().apply(x)
-        # import pdb; pdb.set_trace()
+        bw = BinActive().apply(w) - self.zpw
+        bx = BinActive().apply(x) - self.zpa
 
-        output = nn.functional.linear(bx, bw, self.bias)
-        out = bx @ bw.T + self.bias
+        out = nn.functional.linear(bx, bw, self.bias) * self.sw * self.sa
+        # out = bx @ bw.T + self.bias
 
         return out
     

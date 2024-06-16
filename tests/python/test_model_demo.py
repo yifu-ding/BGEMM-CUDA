@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, Dataset
 import pdb
 import random
 import os
+import argparse
 
 def seed_all(seed=1029):
     random.seed(seed)
@@ -148,13 +149,21 @@ class MLP(nn.Module):
 def main():
     # Setting seeds for reproducibility
     seed_all(0)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--model", default="bgemm", type=str, choices=['bnn_bgemm', 'bnn_fp16', 'fp16'],)
+    args = parser.parse_args()
+    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Target device: " + str(device))
     assert device == torch.device("cuda"), "cannot use bgemm_linear without cuda."
 
-    linear, dtype = BGEMMLinear, torch.float # torch.half
-    # linear, dtype = BNNLinear, torch.float # torch.half
-    # linear, dtype = nn.Linear, torch.float
+    if args.model == 'bnn_bgemm':
+        linear, dtype = BGEMMLinear, torch.float # torch.half
+    elif args.model == 'bnn_fp16':
+        linear, dtype = BNNLinear, torch.float # torch.half
+    else:
+        linear, dtype = nn.Linear, torch.float
+        
     mlp = MLP(Linear=linear, dtype=dtype, bias=True)
     mlp = mlp.to(device)
     
@@ -172,11 +181,17 @@ def main():
     
     
     # define training settings
-    num_epochs = 10
-    lr = 0.0001
+    num_epochs = 100
+    lr = 0.001
     # loss criterion and optimizer
     criterion = nn.BCEWithLogitsLoss().to(device)
-    optimizer = torch.optim.Adam(mlp.parameters(), lr=lr, betas=(0.9, 0.999))
+    all_parameters = list(mlp.named_parameters())
+    scaling_factors = ['sw', 'sa', 'zpw', 'zpa']
+    optimizer_grouped_parameters = [
+        {'params': [p for n, p in all_parameters if (any(nd in n for nd in scaling_factors))], 'lr': 1e-4},
+        {'params': [p for n, p in all_parameters if (not any(nd in n for nd in scaling_factors))]},
+    ]
+    optimizer = torch.optim.Adam(optimizer_grouped_parameters, lr=lr, betas=(0.9, 0.999))
 
     # Setting seeds for reproducibility
     torch.manual_seed(0)
