@@ -278,13 +278,20 @@ __device__ __forceinline__ void core_mma_slice_binpack(int32_t                  
                 MMA_B1B1_M8N8K128_AND( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
             }
         }
-    } else { // xor.pop
+    } else if (INSTR==XOR_POP) { // xor.pop
         #pragma unroll
         for (int i = 0; i < NumRegSets_w; i++) {
             for (int j = 0; j < NumIterB; j++) {
                 int32_t tmp_c[2];  // 
                 MMA_B1B1_M8N8K128_XOR( tmp_c, a[i], b_read[j] );
                 K_SUB_2_XORPOP(c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, tmp_c, TilingConfig::TILE_K_BIN); // 128
+            }
+        }
+    } else {  // ATTN_MM
+        #pragma unroll
+        for (int i = 0; i < NumRegSets_w; i++) {
+            for (int j = 0; j < NumIterB; j++) {
+                ATTN_MM_PTX( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] ); 
             }
         }
     }

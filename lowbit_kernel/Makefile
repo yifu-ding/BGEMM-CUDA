@@ -1,6 +1,6 @@
 # host compiler
 HOST_COMPILER ?= g++
-NVCC          := nvcc -ccbin $(HOST_COMPILER) # -O0 -g -G
+NVCC          := nvcc -ccbin $(HOST_COMPILER) -O0 -g -G
 
 # internal flags
 NVCCFLAGS   := -m$(shell getconf LONG_BIT)

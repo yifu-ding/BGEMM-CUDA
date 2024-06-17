@@ -564,6 +564,7 @@ torch::Tensor bgemm_linear_forward_cuda(torch::Tensor _in_feats,  // half tensor
                                         int           splitK=1,
                                         int           INSTR=XOR_POP)
 {
+    
     int num_in_feats      = _in_feats.size(0);
     int num_in_channels   = _in_feats.size(1);
     int num_out_channels  = _weights.size(0);

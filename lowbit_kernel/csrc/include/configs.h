@@ -69,6 +69,7 @@
 
 #define AND_POP                             0
 #define XOR_POP                             1
+#define ATTN_MM                             2
 
 
 template<int BLOCK_ROW_WARPS_, int BLOCK_COL_WARPS_, int WARP_COL_MMA_TENSORS_>  // 4,1,8

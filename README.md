@@ -16,9 +16,10 @@ cd .. && pip3 install .
 ## Speed and correctness test
 ```sh
 cd tests/python
-python3 test_kernel.py  # directly test GEMM loops
-# cd tests/cpp
-python3 test_model_demo.py --model=[bnn_bgemm, bnn_fp16, fp16]  # tiny training demo of a 3-layer MLP
+# directly test GEMM loops
+python3 test_kernel.py  
+# tiny training demo of a 3-layer MLP
+python3 test_model_demo.py --model=[bnn_bgemm, bnn_fp16, fp16]  
 ```
 
 
@@ -39,7 +40,7 @@ python3 test_model_demo.py --model=[bnn_bgemm, bnn_fp16, fp16]  # tiny training 
 | 8192  | 128            | 22016 | 1      | 10000     | 0.732   | 0.148 | 63.05              | 312.75 |
 
 ## TODO
-- [ ] Pytorch extension and real model demo. 
+- [x] Pytorch extension and python model demo (linear and matmul layers). 
 - [ ] More bitwidth support, e.g., $W_1A_{f16}$, $W_1A_{f8}$. 
 - [ ] Support arbitrarily $N$ (batch size). 
 - [ ] Optimize Share Memory Usage. 

@@ -1,6 +1,6 @@
 import torch
 import torch.nn as nn
-from bgemm_linear import BGEMMLinear, BNNLinear
+from bgemm_linear import *
 
 import torch
 from sklearn.metrics import accuracy_score
@@ -13,6 +13,7 @@ from torch.utils.data import DataLoader, Dataset
 import pdb
 import random
 import os
+import time
 import argparse
 
 def seed_all(seed=1029):
@@ -55,7 +56,7 @@ def test(model, test_loader, device, dtype=torch.float):
     model.eval() 
     y_true = []
     y_pred = []
-   
+    # st = time.time()
     with torch.no_grad():
         for data in test_loader:
             inputs, target = data
@@ -68,7 +69,8 @@ def test(model, test_loader, device, dtype=torch.float):
             target = target.cpu().to(dtype)
             y_true.extend(target.tolist()) 
             y_pred.extend(pred.reshape(-1).tolist())
-        
+    # ed = time.time()
+    # print("test time: %.5f" % ((float)(ed-st) / 60.0))
     return accuracy_score(y_true, y_pred)
 
 
@@ -158,11 +160,12 @@ def main():
     assert device == torch.device("cuda"), "cannot use bgemm_linear without cuda."
 
     if args.model == 'bnn_bgemm':
-        linear, dtype = BGEMMLinear, torch.float # torch.half
+        linear, dtype = BGEMMLinear_elastic_signed, torch.float # torch.half
     elif args.model == 'bnn_fp16':
         linear, dtype = BNNLinear, torch.float # torch.half
     else:
         linear, dtype = nn.Linear, torch.float
+    print("use linear: %s " % linear)
         
     mlp = MLP(Linear=linear, dtype=dtype, bias=True)
     mlp = mlp.to(device)
@@ -200,7 +203,8 @@ def main():
     running_loss = []
     running_test_acc = []
     t = trange(num_epochs, desc="Training loss", leave=True)
-
+    
+    st = time.time()
     for epoch in t:
         loss_epoch = train(mlp, train_quantized_loader, optimizer, criterion, device, dtype=dtype)
         test_acc = test(mlp, test_quantized_loader, device, dtype=dtype)
@@ -208,7 +212,9 @@ def main():
         t.refresh() # to show immediately the update           
         running_loss.append(loss_epoch)
         running_test_acc.append(test_acc)
-        
+    
+    ed = time.time()
+    print("Total training time: %.5f s" % ((float)(ed-st)))
     # %matplotlib inline
 
     loss_per_epoch = [np.mean(loss_per_epoch) for loss_per_epoch in running_loss]
