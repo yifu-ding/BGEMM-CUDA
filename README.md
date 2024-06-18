@@ -40,7 +40,7 @@ python3 test_model_demo.py --model=[bnn_bgemm, bnn_fp16, fp16]
 | 8192  | 128            | 22016 | 1      | 10000     | 0.732   | 0.148 | 63.05              | 312.75 |
 
 ## TODO
-- [x] Pytorch extension and layers (linear and matmul layers (standard matmul with $\{-1, 1\} \times \{-1, 1\}$ and $A \times V$ with $\{0, 1\} \times \{-1, 1\}$ ) in [bgemm_linear.py](tests/python/bgemm_linear.py)).
+- [x] Pytorch extension and layers (linear and matmul layers (standard matmul with {-1, 1} $\times$ {-1, 1} and $A \times V$ with {0, 1} $\times$ {-1, 1} ) in [bgemm_linear.py](tests/python/bgemm_linear.py)).
 - [x] Simple [MLP](tests/python/test_model_demo.py) demo. 
 - [ ] BERT model demo using BGEMM kernel. 
 - [ ] More bitwidth support, e.g., $W_1A_{f16}$, $W_1A_{f8}$. 
