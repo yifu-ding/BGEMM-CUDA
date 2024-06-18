@@ -46,6 +46,7 @@ from torch.autograd import Variable
 from torch.nn.parameter import Parameter
 # from .file_utils import WEIGHTS_NAME, CONFIG_NAME
 # from .configuration_bert import BertConfig
+from configuration_bert import BertConfig
 # from .utils_quant import QuantizeLinear, QuantizeEmbedding, act_quant_fn, AlphaInit
 CONFIG_NAME = "config.json"
 WEIGHTS_NAME = "pytorch_model.bin"
@@ -727,3 +728,11 @@ class BertForQuestionAnswering(BertPreTrainedModel):
             return total_loss, att_output, sequence_output
 
         return (start_logits, end_logits), att_output, sequence_output
+
+
+def test_bert():
+    model_ckpt_dir = ""
+    config = BertConfig.from_pretrained(model_ckpt_dir)
+    config.num_labels = num_labels
+    model = BertForSequenceClassification.from_pretrained(args.student_model, config=student_config)
+    

@@ -35,7 +35,6 @@ def train(model, train_loader, optimizer, criterion, device, dtype=torch.float):
         inputs, target = data
         inputs, target = inputs.to(device), target.to(device)
         optimizer.zero_grad()   
-                
         # forward pass
         output = model(inputs.to(dtype))
         loss = criterion(output, target.unsqueeze(1))
@@ -44,7 +43,7 @@ def train(model, train_loader, optimizer, criterion, device, dtype=torch.float):
         # backward pass + run optimizer to update weights
         loss.backward()
         optimizer.step()
-        
+    
         # keep track of loss value
         losses.append(loss.data.cpu().numpy()) 
 

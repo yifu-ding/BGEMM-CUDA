@@ -3,7 +3,7 @@ import torch.nn as nn
 import lowbit_kernel
 import math
 
-__all__ = ['BNNLinear', 'BGEMMLinear', 'BGEMMLinear_elastic_signed']
+__all__ = ['BNNLinear', 'BGEMMLinear', 'BGEMMLinear_elastic_signed', 'bgemm_matmul', 'bgemm_attn_matmul']
 
 class bgemm_matmul(torch.autograd.Function):
 
@@ -44,7 +44,7 @@ class bgemm_matmul(torch.autograd.Function):
 class bgemm_attn_matmul(torch.autograd.Function):  # noqa
     
     @staticmethod
-    def forward(ctx, input1, input2, instruction="attn_mm"):  # x, w
+    def forward(ctx, input1, input2, instruction="attn_mm"):  # attn, value
         """
         :param input2: input2 to be binarized
         :param input1: input1 to be binarized
@@ -202,7 +202,8 @@ def calculate_gradient_signed(qx, grad, grad_scale):
     indicate_middle = 1.0 - indicate_small - indicate_big   # this is more cpu-friendly than torch.ones(input_.shape)
     # # import pdb; pdb.set_trace()
     # grad_sx = ((indicate_small * Qn + indicate_big * Qp + indicate_middle * (-qx + qx.round())) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
-    grad_sx = ((qx.sign()) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
+    # grad_sx = ((qx.sign()) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
+    grad_sx = ((qx) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
     grad_x = indicate_middle * grad
     return grad_x, grad_sx
 
@@ -244,6 +245,7 @@ class bgemm_linear_elastic_signed(torch.autograd.Function):
 
         input, weight = ctx.saved_tensors
         grad_scale = ctx.other
+        input, weight = input.sign(), weight.sign() 
         
         bs = input.shape[0]
         assert weight.dim() == 2, "weight dim must be 2, now is %d" % weight.dim()
@@ -274,9 +276,9 @@ class BGEMMLinear_elastic_signed(nn.Linear):
         self.sw = nn.Parameter(w.norm(1, 1).div(w.nelement()), requires_grad=True)
         self.sa = nn.Parameter(2 * x.abs().mean() , requires_grad=True)
         self.grad_scale = 1.0 / math.sqrt(x.numel())
-        self.initialized = True
         self.zpw = torch.mean(w) # nn.Parameter(torch.mean(w), requires_grad=False)
         self.zpa = torch.mean(x) # nn.Parameter(torch.mean(x), requires_grad=False)
+        self.initialized = True
         
     def forward(self, x):
         assert x.shape[0] % 32 == 0, "x.shape[0] is %d" % x.shape[0]
@@ -302,6 +304,7 @@ class BinActive(torch.autograd.Function):
         input = input.sign()
         input = torch.where(input==0, torch.ones_like(input), input)
         return input
+    
     @staticmethod
     def backward(ctx, grad_output):
         # input, = ctx.saved_tensors
@@ -321,9 +324,8 @@ class BNNLinear(nn.Linear):
         assert not self.initialized, 'already initialized.'
         self.sw = nn.Parameter(w.norm(1, 1).div(w.nelement()), requires_grad=True)
         self.sa = nn.Parameter(2 * x.abs().mean() , requires_grad=True)
-        self.zpw = torch.mean(w) # nn.Parameter(torch.mean(w), requires_grad=False)
-        self.zpa = torch.mean(x) # nn.Parameter(torch.mean(x), requires_grad=False)
-        
+        self.zpw = torch.mean(w).detach() # nn.Parameter(torch.mean(w), requires_grad=False)
+        self.zpa = torch.mean(x).detach() # nn.Parameter(torch.mean(x), requires_grad=False)
         self.initialized = True
 
     def forward(self, x):
@@ -331,12 +333,11 @@ class BNNLinear(nn.Linear):
             self._initialize(x, self.weight)
             
         w = self.weight - self.zpw
-        x -= self.zpa
-
+        x = x - self.zpa
+# 
         bw = BinActive().apply(w)
         bx = BinActive().apply(x)
-
-        out = nn.functional.linear(bx, bw, self.bias) # * self.sw * self.sa
+        out = nn.functional.linear(bx, bw, self.bias) * self.sw * self.sa
         # out = bx @ bw.T + self.bias
 
         return out
@@ -414,7 +415,6 @@ class TestLinear2(nn.Linear):
         
         # out = torch.matmul(battn, bv).cuda()
 
-        
         # bnn
         # x = BinActive.apply(x)
         # w = BinActive.apply(w)
