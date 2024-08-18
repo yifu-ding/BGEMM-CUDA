@@ -121,7 +121,11 @@ static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
     #endif
     // static size_t SHMEM_SZ = max(WEIGHT_PER_UNIT_BIN*2, TilingConfig::SMEM_SIZE_C_TILE);
     static size_t SHMEM_SZ = WEIGHT_PER_UNIT_BIN*3; // double buffer for both weight and act (128x128 per unit)
-    cudaFuncSetAttribute(PACK_BGEMM_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    if (INSTR>=3) {
+        cudaFuncSetAttribute(PACK_W2A3_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    } else {
+        cudaFuncSetAttribute(PACK_BGEMM_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    }
     size_t  dimN = (N_Global-1) / TilingConfig::TILE_N_BIN + 1; // (256-1)/128+1 = 2
     size_t  dimM = M_Global * Split_K / TilingConfig::TILE_M_BIN; // 256*1/128 = 2
     dim3    GridDim(dimN, dimM, 1);  // 2, 2, 1
@@ -133,9 +137,13 @@ static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
                 GridDim.x, GridDim.y, GridDim.z, BlockDim.x, BlockDim.y, BlockDim.z, SHMEM_SZ);
         printf("\n");
     #endif
-    PACK_BGEMM_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
+    if (INSTR>=3) {
+        PACK_W2A3_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
                     (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
-
+    } else {
+        PACK_BGEMM_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
+                    (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
+    }
     /* cudaDeviceProp deviceProp;
     checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
     checkCudaErrors(cudaFuncSetAttribute(

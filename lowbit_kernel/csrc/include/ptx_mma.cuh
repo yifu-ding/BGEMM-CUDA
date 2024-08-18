@@ -249,6 +249,9 @@ MMA_B1B1_M8N8K128_XOR(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32
         //   "r"(c[0]), "r"(c[1]));
 }
 
+
+
+
 __device__ __forceinline__ void
 ATTN_MM_PTX(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
 {   
@@ -337,6 +340,31 @@ ATTN_MM_PTX(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restr
 }
 
 
+__device__ __forceinline__ void
+MMA_W2A3_M8N8K128(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
+{   
+    asm volatile(
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n"
+        : "=r"(c[0]), "=r"(c[1])
+        : "r"(a[0]), 
+          "r"(b[1]),
+          "r"(0x0), "r"(0x0));
+
+    asm volatile(
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n"
+        : "=r"(c[0]), "=r"(c[1])
+        : "r"(a[0]), 
+          "r"(b[0]),
+          "r"(-c[0]), "r"(-c[1]));
+}
 
 __device__ __forceinline__ void
 SIGN_32_HALF_TO_UINT32(uint32_t __restrict__ d[], half __restrict__ *a)
@@ -377,6 +405,95 @@ SIGN_32_HALF_TO_UINT32(uint32_t __restrict__ d[], half __restrict__ *a)
                 "or.b32  %0,%4,a;                  \n\t"  // d[0] = d[0] | a
                 "}"
                 : "=r"(d[0]) : "h"(A[i+16]), "h"(A[i]), "r"(i), "r"(d[0]));
+    }
+    /* for (uint32_t i = 16; i < 32; i++) { // num of half
+        asm volatile("and.b16 "
+                     "{ %0}, "
+                     "{ %1, %2};\n\t"
+                    : "=h"(sign_16[i])
+                    : "h"(A[i]), "h"(b));
+        asm volatile("shr.b32 "
+                    "{%0}, "
+                    "{%1, %2};\n\t"
+                    : "=r"(sign_32[i])
+                    : "h"(sign_16[i]), "r"(i-16));
+        asm volatile("or.b32 "
+                     "{ %0}, "
+                     "{ %1, %2};\n\t"
+                    : "=r"(d[0])
+                    : "r"(d[0]), "r"(sign_32[i]));
+    } */
+
+}
+
+
+
+
+__device__ __forceinline__ void
+SIGN_32_HALF_TO_UINT32_Ternary(uint32_t __restrict__ d[], half __restrict__ *a)
+{
+    int16_t const *A = reinterpret_cast<int16_t const *>(a);
+
+    asm volatile("mov.b32 %0,0x0; \n\t": "=r"(d[0]));
+    asm volatile("mov.b32 %0,0x0; \n\t": "=r"(d[1]));
+    // uint16_t tmp1 = 0x8765;
+    // uint16_t tmp2 = 0x4321;
+
+    for (uint32_t i = 0; i < 16; i++) { // num of half
+        /* asm volatile(
+            "{      \n\t"
+            // ".reg .u16 m,n;                 \n\t"
+            ".reg .u32 a,b,c,d;             \n\t" 
+            // "mov.u16 m,%1;                  \n\t"
+            // "mov.u16 n,%2;                  \n\t"
+            // "mov.b32 a,{m,n};               \n\t" // pack 2 half to u32
+            "mov.b32 a,{%1,%2};             \n\t" // pack 2 half to u32
+            "and.b32 b,a,0x00008000;        \n\t"  // sign of %2
+            "shr.b32 c,b,%3;                \n\t"  // right shift %3 bits and save to c
+            "and.b32 b,a,0x80000000;        \n\t"  // sign of %1    
+            "shr.b32 d,b,%3;                \n\t"  // right shift %4 bits and save to d
+            "or.b32  d,d,c;                 \n\t"
+            // "or.b32  %0,%0,d;               \n\t"
+            "mov.b32 c,%0;                  \n\t"
+            "or.b32  d,d,c;                 \n\t"
+            "mov.b32 %0,d;                  \n\t"    
+            "}"
+            : "=r"(d[0]) : "h"(A[i]), "h"(A[i+16]), "r"(i)); */
+
+            asm volatile(
+                "{      \n\t"
+                ".reg .b32 a,b,c,cond,d;                  \n\t" 
+                ".reg .pred p,q;                        \n\t"
+                "mov.b32 a,{%2,%3};                     \n\t"  // pack 2 half to u32, order: %3%2
+                "mov.b32 cond,0x38003800;                  \n\t"
+                // "setp.gt.f16x2 p|q,a,d;                 \n\t"  // greater than
+                // // 如果%2大于0.5，那么b左半边置1
+                // "@p or.b32 b,b,0x80000000;              \n\t"
+                // // 如果%1大于0.5，那么b右半边置1
+                // "@q or.b32 b,b,0x00008000;              \n\t"
+                // "shr.b32 b,b,%4;                        \n\t"
+                // "or.b32  %0,%5,b;                       \n\t"
+                // "                                       \n\t"
+                // "mov.b32 d,0xB800B800;                  \n\t"
+                // "setp.lt.f16x2 p|q,a,d;                 \n\t"  // less than
+                // // 如果%2小于-0.5，那么c左半边置1
+                // "@p or.b32 c,c,0x80000000;              \n\t"
+                // // 如果%1小于-0.5，那么c右半边置1
+                // "@q or.b32 c,c,0x00008000;              \n\t"
+                // "shr.b32 c,c,%4;                        \n\t"
+                // "or.b32  %1,%6,c;                       \n\t"
+                "set.gt.u32.f16x2 b,a,cond;                    \n\t"
+                "and.b32 b,b,0x80008000;                    \n\t"
+                "shr.b32 b,b,%4;                            \n\t"
+                "or.b32  %0,%5,b;                           \n\t"
+                "                                           \n\t"
+                "mov.b32 cond,0xB800B800;                      \n\t"
+                "set.lt.u32.f16x2 b,a,cond;                    \n\t"
+                "and.b32 b,b,0x80008000;                    \n\t"
+                "shr.b32 b,b,%4;                            \n\t"
+                "or.b32  %1,%6,b;                           \n\t"
+                "}"
+                : "=r"(d[0]), "=r"(d[1]) : "h"(A[i+16]), "h"(A[i]), "r"(i), "r"(d[0]), "r"(d[1]));
     }
     /* for (uint32_t i = 16; i < 32; i++) { // num of half
         asm volatile("and.b16 "

@@ -47,7 +47,7 @@ HEAD_FILES = csrc/fp6_linear.cuh \
 			 csrc/utils/weight_dequant.h \
 			 csrc/utils/helper.h \
 			 csrc/kernel_test.h \
-			 csrc/fp6_linear.cu \
+			 csrc/fp6_linear.cu
 			 
 			 
 # csrc/bgemm/helper_cuda.h \
@@ -64,7 +64,7 @@ fp6.o: csrc/fp6_llm.cu $(HEAD_FILES)
 fp6: fp6.o
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES) 
 
-bgemm.so: bgemm.o 
+bgemm.so: bgemm.o w2a3.o
 	$(EXEC) $(NVCC) --shared $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
 
 bgemm.o: csrc/benchmark.cu $(HEAD_FILES)
@@ -73,6 +73,11 @@ bgemm.o: csrc/benchmark.cu $(HEAD_FILES)
 bgemm: bgemm.o 
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES) 
 
+w2a3.o: csrc/check_w2a3.cu $(HEAD_FILES)
+	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
+
+w2a3: w2a3.o 
+	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES) 
 
 clean:
 	rm -f libfp6.so fp6.o main bgemm fp6 bgemm.so bgemm.o

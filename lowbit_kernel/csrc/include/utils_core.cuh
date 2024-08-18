@@ -158,6 +158,25 @@ __device__ __forceinline__ void PackFromSharedToRegister_BinaryAct(
     } // error
 }
 
+template<int NUM_INT_PER_MMA> // 2
+__device__ __forceinline__ void PackFromSharedToRegister_BinaryAct_w2a3(
+                                                         uint32_t      __restrict__    (*Reg)[2], 
+                                                         half          __restrict__    (*SPTR)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1],
+                                                         int slice_id, 
+                                                         int NumIterB) {
+    // SPTR += slice_id * (4*WARP_SIZE);  // 8*128/32*4 = 128
+    int     lane_id = threadIdx.x % WARP_SIZE;  // 32
+    if (NUM_INT_PER_MMA==2){ // 每个线程每次mma用2个int
+        #pragma unroll
+        for(int i=0; i<NumIterB; i++) { // 2
+            // Reg[i][0] = SPTR[slice_id*NumIterB*8 + i*8 + lane_id/4][lane_id%4]; 
+            // SIGN_32_HALF_TO_UINT32(Reg[i], &SPTR[lane_id][i*WARP_SIZE]); // 32 half -> Reg[i][0]
+            // SIGN_32_HALF_TO_UINT32(Reg[i], &SPTR[slice_id*NumIterB*8 + i*8 + lane_id/4][(lane_id%4)*WARP_SIZE]); // 32 half -> Reg[i][0]
+            SIGN_32_HALF_TO_UINT32_Ternary(Reg[i], &SPTR[slice_id*NumIterB*8 + i*8 + lane_id/4][(lane_id%4)*WARP_SIZE]);
+        }
+    } // error
+}
+
 
 template <typename TilingConfig>
 __device__ __forceinline__ void initialize_mma_slice_bin(uint32_t                  (*a)[1],
@@ -192,6 +211,25 @@ __device__ __forceinline__ void initialize_mma_slice_binpack(uint32_t           
     // 32个线程，每个线程的有一个a[1]，uint32_t是4B，a也就是4*4B的容量。总共初始化了 32*4*4B 的容量，即 4096b 的 weight
     PackFromSharedToRegister_BinaryW<1, 1>   (a, W_SPTR_read, 0); 
     PackFromSharedToRegister_BinaryAct<1>    (b, A_SPTR_read, 0, NumIterB);  // 这里有一点冗余?也可能不是冗余，就是act少于4096个元素时，会有一部分多余的地址被转换
+}
+
+
+
+template <typename TilingConfig>
+__device__ __forceinline__ void initialize_mma_slice_binpack_w2a3(uint32_t                  (*a)[1],
+                                                            uint32_t                   (*b)[2],
+                                                            half* __restrict__    W_SPTR_read, // 0x7fffd5000600
+                                                            half   __restrict__  (*A_SPTR_read)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1],
+                                                            const int                        NumIterB)
+{
+    // Writing registers
+    // Registers to store FP6 fragments for a slice (64*16) of A matrix => 32 FP6 per thread => 6 register per thread; （32 threads）
+    // Registers to store binary weights for a slice (64*32) of weight matrix => 64 bin per thread =>  1 register per thread（32 thread）
+    // uint32_t a_t[4];                      // NO double buffer, address for 1 reg
+
+    // 32个线程，每个线程的有一个a[1]，uint32_t是4B，a也就是4*4B的容量。总共初始化了 32*4*4B 的容量，即 4096b 的 weight
+    PackFromSharedToRegister_BinaryW<1, 1>   (a, W_SPTR_read, 0); 
+    PackFromSharedToRegister_BinaryAct_w2a3<2>    (b, A_SPTR_read, 0, NumIterB);  // 这里有一点冗余?也可能不是冗余，就是act少于4096个元素时，会有一部分多余的地址被转换
 }
 
 
@@ -271,14 +309,14 @@ __device__ __forceinline__ void core_mma_slice_binpack(int32_t                  
     
 
     // Reading registers and issuing core tensor core computations (a slice of A and B tile in shared memory)
-    if (INSTR==AND_POP){
+    if (INSTR==AND_POP){ // and.pop [0,1]
         #pragma unroll
         for (int i = 0; i < NumRegSets_w; i++) {
             for (int j = 0; j < NumIterB; j++) {
                 MMA_B1B1_M8N8K128_AND( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
             }
         }
-    } else if (INSTR==XOR_POP) { // xor.pop
+    } else if (INSTR==XOR_POP) { // xor.pop [-1,1]
         #pragma unroll
         for (int i = 0; i < NumRegSets_w; i++) {
             for (int j = 0; j < NumIterB; j++) {
@@ -287,7 +325,7 @@ __device__ __forceinline__ void core_mma_slice_binpack(int32_t                  
                 K_SUB_2_XORPOP(c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, tmp_c, TilingConfig::TILE_K_BIN); // 128
             }
         }
-    } else {  // ATTN_MM
+    } else {  // ATTN_MM  // [-1,1] x [0,1]
         #pragma unroll
         for (int i = 0; i < NumRegSets_w; i++) {
             for (int j = 0; j < NumIterB; j++) {
@@ -301,6 +339,52 @@ __device__ __forceinline__ void core_mma_slice_binpack(int32_t                  
 //     CopyFromSharedToRegister_BinaryW<4, 1>  (a_write, W_SPTR_read, slice_id);
     PackFromSharedToRegister_BinaryAct<1>  (b_write, A_SPTR_read, slice_id, NumIterB);
 }
+
+
+
+template <typename TilingConfig>
+__device__ __forceinline__ void core_mma_slice_binpack_w2a3(int32_t      c[][REG_PER_THREAD_C_TENSOR_16_16],
+                                               uint32_t                  (*a)[1],
+                                               uint32_t                  (*b)[2],
+                                               half* __restrict__    W_SPTR_read,
+                                               half __restrict__    (*A_SPTR_read)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1],
+                                            //    half      __restrict__    (*A_SPTR_read)[WARP_K+PADDING_SHARED_MEM_FOR_B_8],
+                                               int32_t*                 RPTR_Scales_w,
+                                               int32_t*                 RPTR_Scales_a,
+                                               int                       slice_id,
+                                               const int                 NumIterB,
+                                               int                      INSTR=AND_POP)      // writing slice[slice_id] to registers, k=0 -> slice_id=1 for prefetching
+{
+    #ifdef DEBUG_MODE
+        assert((TilingConfig::WARP_COL_MMA_TENSORS==1) || (TilingConfig::WARP_COL_MMA_TENSORS%2==0));   // if WARP_COL_MMA_TENSORS == 1, B tile in registers is padded to a 16*16 MMA block
+    #endif
+    const int NumRegSets_w = 1;                                                                              // 1 set = 4 registers, containing a 16*16 MMA block
+    const int NumRegSets_a = 1; // (TilingConfig::WARP_COL_MMA_TENSORS==1) ? 1 : TilingConfig::WARP_COL_MMA_TENSORS/2;                // 1 set = 4 registers, containing a 16*16 MMA block
+    int32_t (*c_uint_ptr)[REG_PER_THREAD_C_TENSOR_16_16] = reinterpret_cast<int32_t(*)[REG_PER_THREAD_C_TENSOR_16_16]>(c);    // Reigsters for accumulated FP32 results
+    // REG_PER_THREAD_C_TENSOR_16_16 = slice_num * 2 = 8
+
+    // Setting RPTRs for double buffers
+    // uint32_t (*a_read )[1] = a;  // 4*1
+    // uint32_t (*a_write)[1] = a; 
+    uint32_t (*b_read )[2] = b;  // 4*1
+    uint32_t (*b_write)[2] = b;
+    if(slice_id%2==1)   { b_write += NumRegSets_a; }
+    else                { b_read  += NumRegSets_a; }
+
+    if (INSTR==W2A3) {
+        for (int i = 0; i < NumRegSets_w; i++) {
+            for (int j = 0; j < NumIterB; j++) {
+                MMA_W2A3_M8N8K128( c_uint_ptr[i + j*4] + ((slice_id+3)%4)*2, a[i], b_read[j] );
+            }
+        }
+    }
+
+    // Writing registers
+    // Registers to store FP6 fragments for a slice (64*16) of A matrix => 32 FP6 per thread => 6 register per thread;
+//     CopyFromSharedToRegister_BinaryW<4, 1>  (a_write, W_SPTR_read, slice_id);
+    PackFromSharedToRegister_BinaryAct_w2a3<2>  (b_write, A_SPTR_read, slice_id, NumIterB);
+}
+
 
 
 #else
