@@ -8,8 +8,8 @@
 #include <cublas_v2.h>
 
 // Performance Benchmark
-#define WARM_UP_ITERATION 1
-#define BENCHMARK_ITERATION 1
+#define WARM_UP_ITERATION 100
+#define BENCHMARK_ITERATION 10000
 
 void __forceinline__ CheckMallocCPU(void* PTR, int line = -1) {
     if (PTR == NULL) {

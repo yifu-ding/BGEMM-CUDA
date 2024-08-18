@@ -74,13 +74,16 @@ def test(model, test_loader, device, dtype=torch.float):
 
 
 def display_loss_plot(losses, title="Training loss", xlabel="Iterations", ylabel="Loss"):
+    # 'losses' can be any list
     x_axis = [i for i in range(len(losses))]
     plt.plot(x_axis,losses)
     plt.title(title)
     plt.xlabel(xlabel)
     plt.ylabel(ylabel)
-    plt.show()
-    
+    # plt.show()
+    plt.savefig("%s_x=%s_y=%s.pdf" % (title, xlabel, ylabel))
+    plt.cla()
+    plt.clf()
     
 def get_preqnt_dataset(data_dir: str, train: bool):
     unsw_nb15_data = np.load(data_dir + "/unsw_nb15_binarized.npz")
@@ -151,19 +154,25 @@ def main():
     # Setting seeds for reproducibility
     seed_all(0)
     parser = argparse.ArgumentParser()
-    parser.add_argument("--model", default="bgemm", type=str, choices=['bnn_bgemm', 'bnn_fp16', 'fp16'],)
+    parser.add_argument("model", default="bgemm_elastic", type=str, choices=['bgemm_elastic', 'bgemm_bireal', 'nn_elastic', 'bnn_fp16', 'fp16'],)
     args = parser.parse_args()
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("Target device: " + str(device))
     assert device == torch.device("cuda"), "cannot use bgemm_linear without cuda."
 
-    if args.model == 'bnn_bgemm':
+    if args.model == 'bgemm_elastic':
         linear, dtype = BGEMMLinear_elastic_signed, torch.float # torch.half
+    elif args.model == 'nn_elastic':
+        linear, dtype = NNLinear_elastic_signed, torch.float # torch.half
+    elif args.model == 'bgemm_bireal':
+        linear, dtype = BGEMMLinear_bireal, torch.float # torch.half
     elif args.model == 'bnn_fp16':
         linear, dtype = BNNLinear, torch.float # torch.half
-    else:
+    elif args.model == "fp16":
         linear, dtype = nn.Linear, torch.float
+    else:
+        linear, dtype = BGEMMLinear_elastic_signed, torch.float # torch.half
     print("use linear: %s " % linear)
         
     mlp = MLP(Linear=linear, dtype=dtype, bias=True)
@@ -177,13 +186,13 @@ def main():
     print("Shape of one input sample: " +  str(train_quantized_dataset[0][0].shape))
 
     # set up dataloader
-    batch_size = 800
+    batch_size = 256
     train_quantized_loader = DataLoader(train_quantized_dataset, batch_size=batch_size, shuffle=True)
     test_quantized_loader = DataLoader(test_quantized_dataset, batch_size=batch_size, shuffle=False)    
     
     
     # define training settings
-    num_epochs = 100
+    num_epochs = 20
     lr = 0.001
     # loss criterion and optimizer
     criterion = nn.BCEWithLogitsLoss().to(device)
@@ -217,10 +226,10 @@ def main():
     # %matplotlib inline
 
     loss_per_epoch = [np.mean(loss_per_epoch) for loss_per_epoch in running_loss]
-    # display_loss_plot(loss_per_epoch)
+    display_loss_plot(loss_per_epoch)
 
     acc_per_epoch = [np.mean(acc_per_epoch) for acc_per_epoch in running_test_acc]
-    # display_loss_plot(acc_per_epoch, title="Test accuracy", ylabel="Accuracy [%]")
+    display_loss_plot(acc_per_epoch, title="Test accuracy", ylabel="Accuracy [%]")
 
     test(mlp, test_quantized_loader, device, dtype=dtype)
     # torch.save(mlp.state_dict(), "state_dict_self-trained.pth")

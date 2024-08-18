@@ -270,7 +270,7 @@ int main(int argc, char** argv)
                         M_GLOBAL, N_GLOBAL, K_GLOBAL,
                         Reduction_Workspace,  
                         Split_K, 2);
-        printf("WARM_UP_ITERATION i=%d", i);
+        // printf("WARM_UP_ITERATION i=%d", i);
     }
     cudaEventRecord(start);
     for (int i = 0; i < BENCHMARK_ITERATION; i++)

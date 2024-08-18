@@ -2,8 +2,9 @@ import torch
 import torch.nn as nn
 import lowbit_kernel
 import math
+import numpy as np
 
-__all__ = ['BNNLinear', 'BGEMMLinear', 'BGEMMLinear_elastic_signed', 'bgemm_matmul', 'bgemm_attn_matmul']
+__all__ = ['BNNLinear', 'BGEMMLinear', 'BGEMMLinear_elastic_signed', 'bgemm_matmul', 'bgemm_attn_matmul', 'BGEMMLinear_bireal', 'NNLinear_elastic_signed']
 
 class bgemm_matmul(torch.autograd.Function):
 
@@ -164,48 +165,186 @@ class bgemm_linear(torch.autograd.Function):
         return feat_grad, weight_grad, None
 
 
-class BGEMMLinear(nn.Linear):
+class bgemm_linear_bireal(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, input, weight, instruction='xor'):
+        """
+        :param input: input to be binarized
+        :param weight: weight to be binarized
+        :param instruction: ['and', 'xor'], 'and' for {0,1} and 'xor' for {-1,1}
+        :return: calculated result 
+        """
+        input = input.to(torch.half)
+        weight = weight.to(torch.half)
+        assert input.dtype == torch.half and weight.dtype == torch.half
 
-    def __init__(self, in_channels, out_channels, bias=False):
-        super(BGEMMLinear, self).__init__(in_channels, out_channels, bias)
-        self.initialized = False
-    
-    def _initialize(self, x, w):
-        assert not self.initialized, 'already initialized.'
-        self.sw = nn.Parameter(w.norm(1, 1).div(w.nelement()), requires_grad=True)
-        self.sa = nn.Parameter(2 * x.abs().mean() , requires_grad=True)
-        self.zpw = torch.mean(w) # nn.Parameter(torch.mean(w), requires_grad=False)
-        self.zpa = torch.mean(x) # nn.Parameter(torch.mean(x), requires_grad=False)
-        
-        self.initialized = True
-        
-    def forward(self, x):
-        assert x.shape[0] % 32 == 0, "x.shape[0] is %d" % x.shape[0]
-        if not self.initialized:
-            self._initialize(x, self.weight)
-
-        w = self.weight - self.zpw
-        x = x - self.zpa
-        # import pdb; pdb.set_trace()
-        out = bgemm_linear.apply(x, w) #* self.sw * self.sa
-        if not self.bias is None:
-            out += self.bias.view(1, -1).expand_as(out)
-
+        ctx.save_for_backward(input, weight)
+        INSTRUCTION = 0 if instruction=='and' else 1 # 1 by default
+        out = lowbit_kernel.bgemm_linear_forward_cuda(input, weight, 1, INSTRUCTION)  
         return out
 
+    @staticmethod
+    def backward(ctx, grad_output):
+        
+        input, weight = ctx.saved_tensors
+        input_sign, weight_sign = input.sign(), weight.sign() 
+        bs = input.shape[0]
+        assert weight.dim() == 2, "weight dim must be 2, now is %d" % weight.dim()
+        
+        # import pdb; pdb.set_trace()
+        
+        if input_sign.dim() == 3:
+            weight_grad = torch.bmm(input_sign.transpose(1, 2), grad_output).transpose(1, 2)   # checked
+            feat_grad = torch.bmm(grad_output, weight_sign.repeat(bs, 1, 1))  # checked
+        elif input_sign.dim() == 2:
+            feat_grad = torch.mm(grad_output, weight_sign) 
+            weight_grad = torch.mm(input_sign.T, grad_output).T
+            
+        # STE
+        # feat_grad, weight_grad = feat_grad*1, weight_grad*1
+        # bireal
+        '''
+        dx = 2+2x  -1<x<0
+             2-2x  0<x<1
+             0     otherwise
+        '''
+        x = input.abs()
+        x = torch.where(x > 1, torch.ones_like(x), x)  # clip
+        dx = 2 - 2 * x
+        # np.save("/disk2/results/bibert/save_npy/save_backward/x_0.npy", input.detach().cpu().numpy())
+        # np.save("/disk2/results/bibert/save_npy/save_backward/dx_0.npy", dx.detach().cpu().numpy())
+        # print("saved x, dx in /disk2/results/bibert/save_npy/save_backward.")
+        feat_grad = feat_grad * dx
 
-def calculate_gradient_signed(qx, grad, grad_scale):
-    # qx = x / sx
-    Qn, Qp = -1, 1
-    indicate_small = (qx < Qn).float()
-    indicate_big = (qx > Qp).float()
-    indicate_middle = 1.0 - indicate_small - indicate_big   # this is more cpu-friendly than torch.ones(input_.shape)
+        return feat_grad, weight_grad, None
+
+
+def ternary(x, is_act):
+    # # norm = ((x - x.min())/ (x.max() - x.min())).to(torch.float32)
     # # import pdb; pdb.set_trace()
-    # grad_sx = ((indicate_small * Qn + indicate_big * Qp + indicate_middle * (-qx + qx.round())) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
-    # grad_sx = ((qx.sign()) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
-    grad_sx = ((qx) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
-    grad_x = indicate_middle * grad
-    return grad_x, grad_sx
+
+    # x = x.to(torch.float32)
+    # # quantile_0 = torch.quantile(x, 0.9)
+    # # quantile_1 = torch.quantile(x, 0.1)
+    # if is_act:
+    #     quantile_0, quantile_1 = 1e-1, -1e-1
+    # else:
+    #     quantile_0, quantile_1 = 1e-1, -1e-1
+    
+    # # print("range: %.5f, %.5f" %(quantile_0, quantile_1))
+    # x = torch.where(x>=quantile_0, torch.ones_like(x), x)
+    # x = torch.where(x<=quantile_1, torch.ones_like(x)-2, x)
+    # x = torch.where(x.abs()!=1, torch.zeros_like(x), x)
+    # return torch.where(x.abs()<1e-3, torch.zeros_like(x), x.sign())
+    # return x
+
+    return x.sign()
+
+class nn_linear_elastic_signed(torch.autograd.Function):
+
+    @staticmethod
+    def forward(ctx, input, weight, sa, sw, grad_scale, instruction="xor"):
+        input = input.clone()
+        weight = weight.clone()
+        # input -= 0.5
+        input -= input.mean().item()
+        weight -= weight.mean().item()
+        
+        # eps = torch.tensor(0.00001).float().to(sa.device)
+        # sa = torch.where(sa > eps, sa, eps)
+        # sw = torch.where(sw > eps, sw, eps)
+        # import pdb; pdb.set_trace()
+        # assert sa > 0 and sw > 0, 'sa = {:.6f}, sw = {:.6f} '.format(sa, sw)
+        
+        ctx.other = grad_scale
+        input = input / sa
+        # weight = weight / sw
+        ctx.save_for_backward(input, weight)
+
+        input = input.to(torch.half)
+        weight = weight.to(torch.half)
+        
+        INSTRUCTION = 0 if instruction=='and' else 1 # 1 by default
+        # out = lowbit_kernel.bgemm_linear_forward_cuda(input, weight, 1, INSTRUCTION)  
+        # input, weight = input.sign(), weight.sign()
+        input, weight = ternary(input, True), ternary(weight, False)
+
+        out = input @ weight.T
+        out = out * sa * sw
+        
+        return out
+    
+    @staticmethod
+    def backward(ctx, grad_output):
+
+        input, weight = ctx.saved_tensors
+        grad_scale = ctx.other
+        # input_sign, weight_sign = input.sign(), weight.sign() 
+        input_sign, weight_sign = ternary(input, True), ternary(weight, False)
+        
+        bs = input.shape[0]
+        assert weight.dim() == 2, "weight dim must be 2, now is %d" % weight.dim()
+        if input_sign.dim() == 3:
+            weight_grad = torch.bmm(input_sign.transpose(1, 2), grad_output).transpose(1, 2)   # checked
+            feat_grad = torch.bmm(grad_output, weight_sign.repeat(bs, 1, 1))  # checked
+        elif input_sign.dim() == 2:
+            weight_grad = torch.mm(input_sign.T, grad_output).T # checked
+            feat_grad = torch.mm(grad_output, weight_sign)  # checked
+
+        grad_input, grad_sa = calculate_gradient_signed(input, feat_grad, grad_scale, True)
+        _, grad_sw = calculate_gradient_signed(weight, weight_grad, grad_scale, False)
+        # import pdb; pdb.set_trace()
+        '''
+        # Constant function (STE)
+        feat_grad, weight_grad = feat_grad*1, weight_grad*1
+        '''
+        def ste(x):
+            return torch.where(x==1, torch.zeros_like(x), torch.ones_like(x))
+        '''
+        # Linear function
+        # dx = 2+2x  -1<x<0
+        #      2-2x  0<x<1
+        #      0     otherwise
+        '''
+        def f_lin(x):   # clip must be 1
+           return 2 - 2 * x 
+        '''
+        # Quadratic function
+        # dx = -3/2 x^2 + 3/2   -1<x<1
+        #      0               otherwise
+        '''
+        def f_quad(x):  # clip must be 1
+            return -3/2 * x.pow(2) + 3/2 
+        
+        def f1(x):  # pass
+            # 向x正半轴和x负半轴收敛到0。关于y轴对称。经过(0,2)点。函数图像与x轴围成的面积存在极限，且极限为4
+            return 2 * torch.exp(-torch.abs(x))
+        
+        def f2(x):
+            # 在x=0附近斜率为0，函数图像与x轴围成的面积存在极限，且极限为2√pi约为3.55
+            return 2 * (torch.exp(-x**2))
+
+        def sech2(x):  
+            # tanh的导数
+            return 2 / torch.cosh(x)**2
+
+        clip = 1
+        x = input.abs()
+        x = torch.where(x > clip, torch.ones_like(x) * clip, x)  # clip
+        dx = f2(x)
+        grad_input = grad_input * dx
+        
+        x = weight.abs()
+        x = torch.where(x > clip, torch.ones_like(x) * clip, x)  # clip
+        dx = f2(x)
+        weight_grad = weight_grad * dx
+        
+        # np.save("/disk2/results/bibert/save_npy/save_backward/x_0.npy", input.detach().cpu().numpy())
+        # np.save("/disk2/results/bibert/save_npy/save_backward/dx_0.npy", dx.detach().cpu().numpy())
+        # print("saved x, dx in /disk2/results/bibert/save_npy/save_backward.")
+        # import pdb; pdb.set_trace() 
+        return grad_input, weight_grad, grad_sa, grad_sw, None
+        # return feat_grad, weight_grad, None, None, None
 
 
 class bgemm_linear_elastic_signed(torch.autograd.Function):
@@ -225,7 +364,7 @@ class bgemm_linear_elastic_signed(torch.autograd.Function):
         # assert sa > 0 and sw > 0, 'sa = {:.6f}, sw = {:.6f} '.format(sa, sw)
         
         ctx.other = grad_scale
-        # input = input / sa
+        input = input / sa
         # weight = weight / sw
         ctx.save_for_backward(input, weight)
 
@@ -245,23 +384,155 @@ class bgemm_linear_elastic_signed(torch.autograd.Function):
 
         input, weight = ctx.saved_tensors
         grad_scale = ctx.other
-        input, weight = input.sign(), weight.sign() 
+        input_sign, weight_sign = input.sign(), weight.sign() 
         
         bs = input.shape[0]
         assert weight.dim() == 2, "weight dim must be 2, now is %d" % weight.dim()
-        if input.dim() == 3:
-            weight_grad = torch.bmm(input.transpose(1, 2), grad_output).transpose(1, 2)   # checked
-            feat_grad = torch.bmm(grad_output, weight.repeat(bs, 1, 1))  # checked
-        elif input.dim() == 2:
-            weight_grad = torch.mm(input.T, grad_output).T # checked
-            feat_grad = torch.mm(grad_output, weight)  # checked
+        if input_sign.dim() == 3:
+            weight_grad = torch.bmm(input_sign.transpose(1, 2), grad_output).transpose(1, 2)   # checked
+            feat_grad = torch.bmm(grad_output, weight_sign.repeat(bs, 1, 1))  # checked
+        elif input_sign.dim() == 2:
+            weight_grad = torch.mm(input_sign.T, grad_output).T # checked
+            feat_grad = torch.mm(grad_output, weight_sign)  # checked
 
         grad_input, grad_sa = calculate_gradient_signed(input, feat_grad, grad_scale)
         _, grad_sw = calculate_gradient_signed(weight, weight_grad, grad_scale)
+        # import pdb; pdb.set_trace()
+        '''
+        # Constant function (STE)
+        feat_grad, weight_grad = feat_grad*1, weight_grad*1
+        '''
+        '''
+        # Linear function
+        # dx = 2+2x  -1<x<0
+        #      2-2x  0<x<1
+        #      0     otherwise
+        x = input.abs()
+        x = torch.where(x > 1, torch.ones_like(x), x)  # clip
+        dx = 2 - 2 * x
+        grad_input = grad_input * dx
+        '''
+        def f_lin(x):
+           return 2 - 2 * x 
+        '''
+        # Quadratic function
+        # dx = -3/2 x^2 + 3/2   -1<x<1
+        #      0               otherwise
+        x = input
+        x = torch.where(x.abs() > 1, torch.ones_like(x), x)  # clip
+        dx = -3/2 * x.pow(2) + 3/2 
+        grad_input = grad_input * dx
+        '''
+        def f_quad(x):  # clip must be 1
+            return -3/2 * x.pow(2) + 3/2 
+        
+        def f1(x): 
+            # 向x正半轴和x负半轴收敛到0。关于y轴对称。经过(0,2)点。函数图像与x轴围成的面积存在极限，且极限为4
+            return 2 * torch.exp(-torch.abs(x))
+        
+        def f2(x):
+            # 在x=0附近斜率为0，函数图像与x轴围成的面积存在极限，且极限为2√pi约为3.55
+            return 2 * (torch.exp(-x**2))
 
+        def sech2(x):  
+            # 与x轴围成的面积是4
+            return 2 / torch.cosh(x)**2
+
+        clip = 4
+        x = input.abs()
+        x = torch.where(x > clip, torch.ones_like(x) * clip, x)  # clip
+        dx = sech2(x)
+        grad_input = grad_input * dx
+        
+        x = weight.abs()
+        x = torch.where(x > clip, torch.ones_like(x) * clip, x)  # clip
+        dx = sech2(x)
+        weight_grad = weight_grad * dx
+        
+        # np.save("/disk2/results/bibert/save_npy/save_backward/x_0.npy", input.detach().cpu().numpy())
+        # np.save("/disk2/results/bibert/save_npy/save_backward/dx_0.npy", dx.detach().cpu().numpy())
+        # print("saved x, dx in /disk2/results/bibert/save_npy/save_backward.")
+        # import pdb; pdb.set_trace() 
         return grad_input, weight_grad, grad_sa, grad_sw, None
         # return feat_grad, weight_grad, None, None, None
 
+
+class BGEMMLinear(nn.Linear):
+
+    def __init__(self, in_channels, out_channels, bias=False):
+        super(BGEMMLinear, self).__init__(in_channels, out_channels, bias)
+        self.initialized = False
+    
+    def _initialize(self, x, w):
+        assert not self.initialized, 'already initialized.'
+        self.sw = nn.Parameter(w.norm(1, 1).div(w.nelement()), requires_grad=True)
+        self.sa = nn.Parameter(2 * x.abs().mean() , requires_grad=True)
+        self.zpw = torch.mean(w).detach() # nn.Parameter(torch.mean(w), requires_grad=False)
+        self.zpa = torch.mean(x).detach() # nn.Parameter(torch.mean(x), requires_grad=False)
+        self.initialized = True
+        
+    def forward(self, x):
+        assert x.shape[0] % 32 == 0, "x.shape[0] is %d" % x.shape[0]
+        if not self.initialized:
+            self._initialize(x, self.weight)
+
+        w = self.weight - self.zpw
+        x = x - self.zpa
+        # import pdb; pdb.set_trace()
+        out = bgemm_linear.apply(x, w) * self.sw * self.sa
+        if not self.bias is None:
+            out += self.bias.view(1, -1).expand_as(out)
+
+        return out
+    
+
+class BGEMMLinear_bireal(nn.Linear):
+
+    def __init__(self, in_channels, out_channels, bias=False):
+        super(BGEMMLinear_bireal, self).__init__(in_channels, out_channels, bias)
+        self.initialized = False
+    
+    def _initialize(self, x, w):
+        assert not self.initialized, 'already initialized.'
+        self.sw = nn.Parameter(w.norm(1, 1).div(w.nelement()), requires_grad=True)
+        self.sa = nn.Parameter(2 * x.abs().mean() , requires_grad=True)
+        self.zpw = torch.mean(w).detach() # nn.Parameter(torch.mean(w), requires_grad=False)
+        self.zpa = torch.mean(x).detach() # nn.Parameter(torch.mean(x), requires_grad=False)
+        
+        self.initialized = True
+        
+    def forward(self, x):
+        assert x.shape[0] % 32 == 0, "x.shape[0] is %d" % x.shape[0]
+        if not self.initialized:
+            self._initialize(x, self.weight)
+
+        w = self.weight - self.zpw
+        x = x - self.zpa
+
+        out = bgemm_linear_bireal.apply(x, w) * self.sw * self.sa
+        if not self.bias is None:
+            out += self.bias.view(1, -1).expand_as(out)
+
+        return out
+
+
+def calculate_gradient_signed(qx, grad, grad_scale, is_act):
+    # qx = x / sx
+    Qn, Qp = -1, 1
+    indicate_small = (qx < Qn).float()
+    indicate_big = (qx > Qp).float()
+    indicate_middle = 1.0 - indicate_small - indicate_big   # this is more cpu-friendly than torch.ones(input_.shape)
+    # # import pdb; pdb.set_trace()
+    # grad_sx = ((indicate_small * Qn + indicate_big * Qp + indicate_middle * (-qx + qx.round())) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
+    # grad_sx = ((indicate_small * Qn + indicate_big * Qp + indicate_middle * (-qx + ternary(qx))) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
+    # grad_sx = ((qx.sign()) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
+    if not is_act:
+        grad_sx = (ternary(qx, is_act) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
+    else:
+        grad_sx = ((indicate_small * Qn + indicate_big * Qp + indicate_middle * (-qx + ternary(qx, is_act))) * grad * grad_scale).sum(dim=-1).unsqueeze(dim=0)
+    # grad_x = indicate_middle * grad
+    grad_x = grad
+    return grad_x, grad_sx
 
 
 class BGEMMLinear_elastic_signed(nn.Linear):
@@ -276,8 +547,8 @@ class BGEMMLinear_elastic_signed(nn.Linear):
         self.sw = nn.Parameter(w.norm(1, 1).div(w.nelement()), requires_grad=True)
         self.sa = nn.Parameter(2 * x.abs().mean() , requires_grad=True)
         self.grad_scale = 1.0 / math.sqrt(x.numel())
-        self.zpw = torch.mean(w) # nn.Parameter(torch.mean(w), requires_grad=False)
-        self.zpa = torch.mean(x) # nn.Parameter(torch.mean(x), requires_grad=False)
+        self.zpw = torch.mean(w).detach() # nn.Parameter(torch.mean(w), requires_grad=False)
+        self.zpa = torch.mean(x).detach() # nn.Parameter(torch.mean(x), requires_grad=False)
         self.initialized = True
         
     def forward(self, x):
@@ -287,6 +558,37 @@ class BGEMMLinear_elastic_signed(nn.Linear):
 
         # import pdb; pdb.set_trace()
         out = bgemm_linear_elastic_signed.apply(x, self.weight, self.sa, self.sw, self.grad_scale)
+        if not self.bias is None:
+            out += self.bias.view(1, -1).expand_as(out)
+
+        return out
+
+
+
+
+class NNLinear_elastic_signed(nn.Linear):
+
+    def __init__(self, in_channels, out_channels, bias=True):
+        super(NNLinear_elastic_signed, self).__init__(in_channels, out_channels, bias)
+        self.initialized = False
+        
+    
+    def _initialize(self, x, w):
+        assert not self.initialized, 'already initialized.'
+        self.sw = nn.Parameter(w.norm(1, 1).div(w.nelement()), requires_grad=True)
+        self.sa = nn.Parameter(2 * x.abs().mean() , requires_grad=True)
+        self.grad_scale = 1.0 / math.sqrt(x.numel())
+        self.zpw = torch.mean(w).detach() # nn.Parameter(torch.mean(w), requires_grad=False)
+        self.zpa = torch.mean(x).detach() # nn.Parameter(torch.mean(x), requires_grad=False)
+        self.initialized = True
+        
+    def forward(self, x):
+        assert x.shape[0] % 32 == 0, "x.shape[0] is %d" % x.shape[0]
+        if not self.initialized:
+            self._initialize(x, self.weight)
+
+        # import pdb; pdb.set_trace()
+        out = nn_linear_elastic_signed.apply(x, self.weight, self.sa, self.sw, self.grad_scale)
         if not self.bias is None:
             out += self.bias.view(1, -1).expand_as(out)
 
@@ -334,7 +636,7 @@ class BNNLinear(nn.Linear):
             
         w = self.weight - self.zpw
         x = x - self.zpa
-# 
+
         bw = BinActive().apply(w)
         bx = BinActive().apply(x)
         out = nn.functional.linear(bx, bw, self.bias) * self.sw * self.sa
@@ -401,6 +703,8 @@ class TestLinear(nn.Linear):
         out = mm.apply(matB, matA)
 
         return out
+    
+    
 
 class TestLinear2(nn.Linear):
 
@@ -411,7 +715,7 @@ class TestLinear2(nn.Linear):
         w = self.weight
         # bgemm
         # out = bgemm_linear.apply(x, w)
-        out = bgemm_attn_matmul.apply(x.cuda(), w.cuda())
+        out = bgemm_linear_bireal.apply(x.cuda(), w.cuda())
         
         # out = torch.matmul(battn, bv).cuda()
 
@@ -446,7 +750,7 @@ def test_linear():
 
     lin2 = nn.Sequential(
         nn.Linear(128, 128, False),        
-        BGEMMLinear(128, 32, False),
+        BGEMMLinear_bireal(128, 32, False),
     )
     lin2 = lin2.cuda()
     lin2[0].weight = nn.Parameter(lin1[0].weight.clone(), requires_grad=True)

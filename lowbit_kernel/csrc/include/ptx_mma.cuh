@@ -253,6 +253,49 @@ __device__ __forceinline__ void
 ATTN_MM_PTX(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
 {   
 
+   /*  // uint32_t notA;
+    // uint32_t notB;
+
+    // asm volatile("not.b32   %0,%1; \n\t": "=r"(notA) : "r"(a[0]));
+    // asm volatile("not.b32   %0,%1; \n\t": "=r"(notB) : "r"(b[0]));
+
+    uint32_t tmp1[2];
+
+    // asm volatile(  // notA & B
+    //     "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+    //     "{%0,%1}, "
+    //     "{%2}, "
+    //     "{%3}, "
+    //     "{%4,%5};\n"
+    //     : "=r"(tmp1[0]), "=r"(tmp1[1])
+    //     : "r"(notA), 
+    //       "r"(b[0]), 
+    //       "r"(0x0), "r"(0x0));
+
+    // // asm volatile("sub.s32   %0,0x0,%0;\n\t":"+r"(tmp1[0]));  // - (notA & B)
+    // // asm volatile("sub.s32   %0,0x0,%0;\n\t":"+r"(tmp1[1]));
+    uint32_t tmp2[2];
+
+    asm volatile(  // notA & notB
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n"
+        : "=r"(tmp2[0]), "=r"(tmp2[1])
+        : "r"(a[0]), 
+          "r"(b[0]), 
+          "r"(0x0), "r"(0x0));
+
+    asm volatile("not.b32   %0,%1; \n\t": "=r"(tmp1[0]) : "r"(tmp2[0]));
+    asm volatile("not.b32   %0,%1; \n\t": "=r"(tmp1[1]) : "r"(tmp2[1]));
+
+    asm volatile("add.s32   %0,%0,%1; \n\t" : "+r"(c[0]) : "r"(tmp2[0]));  // 
+    asm volatile("sub.s32   %0,%0,%1; \n\t" : "+r"(c[0]) : "r"(tmp1[0]));  // 
+    asm volatile("add.s32   %0,%0,%1; \n\t" : "+r"(c[1]) : "r"(tmp2[1]));  // 
+    asm volatile("sub.s32   %0,%0,%1; \n\t" : "+r"(c[1]) : "r"(tmp1[1]));  //  */
+
+
     uint32_t notA;
     uint32_t notB;
 
