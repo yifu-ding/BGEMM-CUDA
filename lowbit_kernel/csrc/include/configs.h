@@ -71,6 +71,8 @@
 #define XOR_POP                             1
 #define ATTN_MM                             2
 #define W2A3                                3
+#define ATTV_W2A3                           4
+#define QK_W2A3                             5
 
 
 template<int BLOCK_ROW_WARPS_, int BLOCK_COL_WARPS_, int WARP_COL_MMA_TENSORS_>  // 4,1,8
@@ -86,6 +88,7 @@ struct TilingConfig {
     static constexpr int TILE_N                 = MMA_8  * WARP_COL_MMA_TENSORS * BLOCK_COL_WARPS;
     static constexpr int TILE_K                 = WARP_K;
     static constexpr int TILE_M_BIN             = 32;
+    static constexpr int TILE_M_W2A3             = 128;
     // static constexpr int TILE_N_BIN             = MMA_16  * WARP_COL_MMA_TENSORS * BLOCK_COL_WARPS; // 16*8*1=128
     static constexpr int TILE_N_BIN             = 32;
     static constexpr int TILE_K_BIN             = WARP_K_BIN;

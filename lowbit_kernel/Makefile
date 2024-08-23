@@ -1,10 +1,10 @@
 # host compiler
 HOST_COMPILER ?= g++
-NVCC          := nvcc -ccbin $(HOST_COMPILER) -O0 -g -G
+NVCC          := nvcc -ccbin $(HOST_COMPILER) # -O0 -g -G
 
 # internal flags
 NVCCFLAGS   := -m$(shell getconf LONG_BIT)
-CCFLAGS     := -fPIC
+CCFLAGS     := -fPIC -fopenmp
 LDFLAGS     :=
 
 ALL_CCFLAGS :=
@@ -53,7 +53,7 @@ HEAD_FILES = csrc/fp6_linear.cuh \
 # csrc/bgemm/helper_cuda.h \
 # 			 csrc/bgemm/helper_functions.h \
 # Target rules
-all: bgemm.so
+# all: bgemm.so
 
 libfp6.so: fp6.o
 	$(EXEC) $(NVCC) --shared $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES)
@@ -76,10 +76,28 @@ bgemm: bgemm.o
 w2a3.o: csrc/check_w2a3.cu $(HEAD_FILES)
 	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
 
+# 线性层
 w2a3: w2a3.o 
 	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES) 
 
+w2a3_attv.o:  csrc/check_attv.cu $(HEAD_FILES)
+	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
+
+# w2a3的attention x value
+attv: w2a3_attv.o 
+	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES) 
+
+
+w2a3_qk.o:  csrc/check_qk.cu $(HEAD_FILES)
+	$(EXEC) $(NVCC) $(INCLUDES) $(ALL_CCFLAGS) $(GENCODE_FLAGS) -o $@ -c $<
+
+
+# w2a3的query * key
+qk: w2a3_qk.o 
+	$(EXEC) $(NVCC) $(ALL_LDFLAGS) $(GENCODE_FLAGS) -o $@ $+ $(LIBRARIES) 
+
+
 clean:
-	rm -f libfp6.so fp6.o main bgemm fp6 bgemm.so bgemm.o
+	rm -f libfp6.so fp6.o main bgemm fp6 bgemm.so bgemm.o w2a3.o w2a3 w2a3_qk.o qk w2a3_attv.o attv
 
 	

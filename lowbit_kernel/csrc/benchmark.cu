@@ -145,7 +145,7 @@ int main(int argc, char** argv)
 
     for (size_t i = 0; i < M_GLOBAL * K_GLOBAL; i++) {
         if (__half2float(A_h[i]) < 0.0f) {
-            A_h_cublas[i] = __float2half_rn(0.0f);
+            A_h_cublas[i] = __float2half_rn(-1.0f);
         } else {
             A_h_cublas[i] =  __float2half_rn(1.0f);
         }
@@ -269,7 +269,7 @@ int main(int argc, char** argv)
                         D_bin,
                         M_GLOBAL, N_GLOBAL, K_GLOBAL,
                         Reduction_Workspace,  
-                        Split_K, 2);
+                        Split_K, 1);
         // printf("WARM_UP_ITERATION i=%d", i);
     }
     cudaEventRecord(start);
@@ -280,7 +280,7 @@ int main(int argc, char** argv)
                         D_bin,
                         M_GLOBAL, N_GLOBAL, K_GLOBAL,
                         Reduction_Workspace,  
-                        Split_K, 2);
+                        Split_K, 1);
     cudaEventRecord(stop);
     cudaEventSynchronize(stop);
     checkLastCudaError(__LINE__);

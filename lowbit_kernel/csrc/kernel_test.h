@@ -8,8 +8,8 @@
 #include <cublas_v2.h>
 
 // Performance Benchmark
-#define WARM_UP_ITERATION 1
-#define BENCHMARK_ITERATION 1
+#define WARM_UP_ITERATION 100
+#define BENCHMARK_ITERATION 10000
 
 void __forceinline__ CheckMallocCPU(void* PTR, int line = -1) {
     if (PTR == NULL) {
@@ -58,7 +58,7 @@ double ComputeTotalError(half* CuBlas, half* Other, size_t m, size_t n)
 
 void PrintPerformance(const char* KernelName, float milliseconds, float tflops, double error)
 {
-    printf("%-10s \t -> \t\t Time/ms: %5.3f \t Performance/TFLOPs: %4.2f \t TotalAbsError/TotalAbsSum: %.8lf\n",
+    printf("%-10s \t -> \t\t Time/ms: %5.5f \t Performance/TFLOPs: %4.5f \t TotalAbsError/TotalAbsSum: %.8lf\n",
            KernelName,
            milliseconds,
            tflops,

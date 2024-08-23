@@ -50,6 +50,44 @@ static void Kernel_Ex(cudaStream_t    stream,
 }
 
 
+
+template<typename TilingConfig, typename OutputDataType>
+static void FP16_Kernel_Ex(cudaStream_t    stream,
+                      const half     *Weight, // 4B = 32b
+                      const half      *Scales, // 16b
+                      const half      *B,
+                      OutputDataType  *C,
+                      const size_t    M_Global,
+                      const size_t    N_Global,
+                      const size_t    K_Global, 
+                      int             Split_K) 
+{   
+    #ifdef DEBUG_MODE
+        printf("\n");
+        printf("Launcher.cu->Kernel_Ex():\n");
+        printf("M: %d, N: %d, K: %d, SplitK: %d\n", M_Global, N_Global, K_Global, Split_K);
+        printf("TILE_M: %d, TILE_K: %d, TILE_N: %d\n", TilingConfig::TILE_M, TilingConfig::TILE_K, TilingConfig::TILE_N);
+        // printf("Weight: %u", Weight);
+    #endif
+    // static size_t SHMEM_SZ = max(TilingConfig::SMEM_SIZE_B_TILE+SMEM_SIZE_A1_TILE+SMEM_SIZE_A2_TILE, TilingConfig::SMEM_SIZE_C_TILE);
+    // cudaFuncSetAttribute(FP16_GEMM_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    static size_t SHMEM_SZ = WEIGHT_PER_UNIT_BIN*4; // double buffer for both weight and act (128x128 per unit)
+    cudaFuncSetAttribute(FP16_GEMM_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+
+    size_t  dimN = (N_Global-1) / TilingConfig::TILE_N_BIN + 1; // (32-1)/32+1 = 1
+    size_t  dimM = M_Global * Split_K / TilingConfig::TILE_M_W2A3; // 256*1/128 = 2
+    dim3    GridDim(dimN, dimM, 1);  // 1,2,1
+    dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS, 1, 1); // 128, 1, 1
+    
+    #ifdef DEBUG_MODE
+        printf("GridDim.x: %d, GridDim.y: %d, GridDim.z: %d, BlockDim.x: %d, BlockDim.y: %d, BlockDim.z: %d SHMEM_SZ: %d\n",
+                GridDim.x, GridDim.y, GridDim.z, BlockDim.x, BlockDim.y, BlockDim.z, SHMEM_SZ);
+        printf("\n");
+    #endif
+    FP16_GEMM_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
+                    (Weight, B, C, M_Global, N_Global, K_Global, Split_K);
+}
+
 template<typename TilingConfig, typename OutputDataType>
 static void Kernel_Ex_Bin(cudaStream_t    stream,
                       const uint4     *Weight, // 4B = 32b
@@ -121,14 +159,10 @@ static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
     #endif
     // static size_t SHMEM_SZ = max(WEIGHT_PER_UNIT_BIN*2, TilingConfig::SMEM_SIZE_C_TILE);
     static size_t SHMEM_SZ = WEIGHT_PER_UNIT_BIN*3; // double buffer for both weight and act (128x128 per unit)
-    if (INSTR>=3) {
-        cudaFuncSetAttribute(PACK_W2A3_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
-    } else {
-        cudaFuncSetAttribute(PACK_BGEMM_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
-    }
-    size_t  dimN = (N_Global-1) / TilingConfig::TILE_N_BIN + 1; // (256-1)/128+1 = 2
-    size_t  dimM = M_Global * Split_K / TilingConfig::TILE_M_BIN; // 256*1/128 = 2
-    dim3    GridDim(dimN, dimM, 1);  // 2, 2, 1
+    cudaFuncSetAttribute(PACK_BGEMM_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    size_t  dimN = (N_Global-1) / TilingConfig::TILE_N_BIN + 1; // (32-1)/32+1 = 1
+    size_t  dimM = M_Global * Split_K / TilingConfig::TILE_M_BIN; // 256*1/32 = 8
+    dim3    GridDim(dimN, dimM, 1);  // 1,8,1
     dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS, 1, 1); // 128, 1, 1
     // dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS_BIN, 1, 1); // 32/64, 1, 1
     //
@@ -137,13 +171,8 @@ static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
                 GridDim.x, GridDim.y, GridDim.z, BlockDim.x, BlockDim.y, BlockDim.z, SHMEM_SZ);
         printf("\n");
     #endif
-    if (INSTR>=3) {
-        PACK_W2A3_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
-                    (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
-    } else {
-        PACK_BGEMM_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
-                    (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
-    }
+    PACK_BGEMM_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
+                (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
     /* cudaDeviceProp deviceProp;
     checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
     checkCudaErrors(cudaFuncSetAttribute(
@@ -154,9 +183,160 @@ static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
                                     SHMEM_SZ>>>((int4*)Weight, (int4*)B, (int*)C, M_Global, N_Global, K_Global, 0, 0))); */
 }
 
+
+
+
+template<typename TilingConfig, typename OutputDataType>
+static void Kernel_Ex_W2A3_Pack_MM(cudaStream_t    stream,
+                      const uint32_t     *Weight, // 4B = 32b
+                      const half      *Scales, // 16b
+                      const half      *Scales_B, // 16b
+                      const half     *B,
+                    //   const half      *B,
+                      OutputDataType  *C,
+                      const size_t    M_Global,
+                      const size_t    N_Global,
+                      const size_t    K_Global, 
+                      int             Split_K,
+                      int             INSTR) 
+{   
+    #ifdef DEBUG_MODE
+        printf("\n");
+        printf("Launcher.cu->Kernel_Ex_W1A1_Pack_MM():\n");
+        printf("M: %d, N: %d, K: %d, SplitK: %d\n", M_Global, N_Global, K_Global, Split_K);
+        printf("TILE_M_BIN: %d, TILE_K_BIN: %d, TILE_N_BIN: %d\n", TilingConfig::TILE_M_BIN, TilingConfig::TILE_K_BIN, TilingConfig::TILE_N_BIN);
+        // printf("Weight: %u\n", Weight);
+    #endif
+    // static size_t SHMEM_SZ = max(WEIGHT_PER_UNIT_BIN*2, TilingConfig::SMEM_SIZE_C_TILE);
+    static size_t SHMEM_SZ = WEIGHT_PER_UNIT_BIN*3; // double buffer for both weight and act (128x128 per unit)
+    cudaFuncSetAttribute(PACK_W2A3_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    size_t  dimN = (N_Global-1) / TilingConfig::TILE_N_BIN + 1; // (32-1)/32+1 = 1
+    size_t  dimM = M_Global * Split_K / TilingConfig::TILE_M_W2A3; // 256*1/128 = 2
+    dim3    GridDim(dimN, dimM, 1);  // 1,2,1
+    dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS, 1, 1); // 128, 1, 1
+    // dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS_BIN, 1, 1); // 32/64, 1, 1
+    //
+    #ifdef DEBUG_MODE
+        printf("GridDim.x: %d, GridDim.y: %d, GridDim.z: %d, BlockDim.x: %d, BlockDim.y: %d, BlockDim.z: %d SHMEM_SZ: %d\n",
+                GridDim.x, GridDim.y, GridDim.z, BlockDim.x, BlockDim.y, BlockDim.z, SHMEM_SZ);
+        printf("\n");
+    #endif
+    PACK_W2A3_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
+                (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
+    /* cudaDeviceProp deviceProp;
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
+    checkCudaErrors(cudaFuncSetAttribute(
+      apmm_w1a1, cudaFuncAttributeMaxDynamicSharedMemorySize,
+      SHMEM_SZ));
+    checkKernelErrors(
+              (apmm_w1a1<<<deviceProp.multiProcessorCount, THREADS_PER_BLOCK,
+                                    SHMEM_SZ>>>((int4*)Weight, (int4*)B, (int*)C, M_Global, N_Global, K_Global, 0, 0))); */
+}
+
+
+
+template<typename TilingConfig, typename OutputDataType>
+static void Kernel_Ex_ATTV_W2A3_MM(cudaStream_t    stream,
+                      const half      *Weight, // 4B = 32b
+                      const half      *Scales, // 16b
+                      const half      *Scales_B, // 16b
+                      const half     *B,
+                    //   const half      *B,
+                      OutputDataType  *C,
+                      const size_t    M_Global,
+                      const size_t    N_Global,
+                      const size_t    K_Global, 
+                      int             Split_K,
+                      int             INSTR) 
+{   
+    #ifdef DEBUG_MODE
+        printf("\n");
+        printf("Launcher.cu->Kernel_Ex_W1A1_Pack_MM():\n");
+        printf("M: %d, N: %d, K: %d, SplitK: %d\n", M_Global, N_Global, K_Global, Split_K);
+        printf("TILE_M_BIN: %d, TILE_K_BIN: %d, TILE_N_BIN: %d\n", TilingConfig::TILE_M_BIN, TilingConfig::TILE_K_BIN, TilingConfig::TILE_N_BIN);
+        // printf("Weight: %u\n", Weight);
+    #endif
+    // static size_t SHMEM_SZ = max(WEIGHT_PER_UNIT_BIN*2, TilingConfig::SMEM_SIZE_C_TILE);
+    static size_t SHMEM_SZ = WEIGHT_PER_UNIT_BIN*3; // double buffer for both weight and act (128x128 per unit)
+    cudaFuncSetAttribute(PACK_AttV_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    size_t  dimN = (N_Global-1) / TilingConfig::TILE_N_BIN + 1; // (32-1)/32+1 = 1
+    size_t  dimM = M_Global * Split_K / TilingConfig::TILE_M_W2A3; // 256*1/128 = 2
+    dim3    GridDim(dimN, dimM, 1);  // 1,2,1
+    dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS, 1, 1); // 128, 1, 1
+    // dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS_BIN, 1, 1); // 32/64, 1, 1
+    //
+    #ifdef DEBUG_MODE
+        printf("GridDim.x: %d, GridDim.y: %d, GridDim.z: %d, BlockDim.x: %d, BlockDim.y: %d, BlockDim.z: %d SHMEM_SZ: %d\n",
+                GridDim.x, GridDim.y, GridDim.z, BlockDim.x, BlockDim.y, BlockDim.z, SHMEM_SZ);
+        printf("\n");
+    #endif
+    PACK_AttV_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
+                (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
+    /* cudaDeviceProp deviceProp;
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
+    checkCudaErrors(cudaFuncSetAttribute(
+      apmm_w1a1, cudaFuncAttributeMaxDynamicSharedMemorySize,
+      SHMEM_SZ));
+    checkKernelErrors(
+              (apmm_w1a1<<<deviceProp.multiProcessorCount, THREADS_PER_BLOCK,
+                                    SHMEM_SZ>>>((int4*)Weight, (int4*)B, (int*)C, M_Global, N_Global, K_Global, 0, 0))); */
+}
+
+
+
+template<typename TilingConfig, typename OutputDataType>
+static void Kernel_Ex_QK_W2A3_MM(cudaStream_t    stream,
+                      const half      *Weight, // 4B = 32b
+                      const half      *Scales, // 16b
+                      const half      *Scales_B, // 16b
+                      const half     *B,
+                    //   const half      *B,
+                      OutputDataType  *C,
+                      const size_t    M_Global,
+                      const size_t    N_Global,
+                      const size_t    K_Global, 
+                      int             Split_K,
+                      int             INSTR) 
+{   
+    #ifdef DEBUG_MODE
+        printf("\n");
+        printf("Launcher.cu->Kernel_Ex_W1A1_Pack_MM():\n");
+        printf("M: %d, N: %d, K: %d, SplitK: %d\n", M_Global, N_Global, K_Global, Split_K);
+        printf("TILE_M_BIN: %d, TILE_K_BIN: %d, TILE_N_BIN: %d\n", TilingConfig::TILE_M_BIN, TilingConfig::TILE_K_BIN, TilingConfig::TILE_N_BIN);
+        // printf("Weight: %u\n", Weight);
+    #endif
+    // static size_t SHMEM_SZ = max(WEIGHT_PER_UNIT_BIN*2, TilingConfig::SMEM_SIZE_C_TILE);
+    static size_t SHMEM_SZ = WEIGHT_PER_UNIT_BIN*3; // double buffer for both weight and act (128x128 per unit)
+    cudaFuncSetAttribute(PACK_QK_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    size_t  dimN = (N_Global-1) / TilingConfig::TILE_N_BIN + 1; // (32-1)/32+1 = 1
+    size_t  dimM = M_Global * Split_K / TilingConfig::TILE_M_W2A3; // 256*1/128 = 2
+    dim3    GridDim(dimN, dimM, 1);  // 1,2,1
+    dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS, 1, 1); // 128, 1, 1
+    // dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS_BIN, 1, 1); // 32/64, 1, 1
+    //
+    #ifdef DEBUG_MODE
+        printf("GridDim.x: %d, GridDim.y: %d, GridDim.z: %d, BlockDim.x: %d, BlockDim.y: %d, BlockDim.z: %d SHMEM_SZ: %d\n",
+                GridDim.x, GridDim.y, GridDim.z, BlockDim.x, BlockDim.y, BlockDim.z, SHMEM_SZ);
+        printf("\n");
+    #endif
+    PACK_QK_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
+                (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
+    /* cudaDeviceProp deviceProp;
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
+    checkCudaErrors(cudaFuncSetAttribute(
+      apmm_w1a1, cudaFuncAttributeMaxDynamicSharedMemorySize,
+      SHMEM_SZ));
+    checkKernelErrors(
+              (apmm_w1a1<<<deviceProp.multiProcessorCount, THREADS_PER_BLOCK,
+                                    SHMEM_SZ>>>((int4*)Weight, (int4*)B, (int*)C, M_Global, N_Global, K_Global, 0, 0))); */
+}
+
+
 /*
  *
  */
+
+
 cudaError_t fp6_linear_kernel(cudaStream_t    stream,
                               const uint4     *Weight,  // 4B = 4 * 8b
                               const half      *Scales,  // 16b
@@ -207,6 +387,69 @@ cudaError_t fp6_linear_kernel(cudaStream_t    stream,
                             return cudaErrorUnknown;
                         }
                         Kernel_Ex<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
+        }
+        // Reduction for SplitK
+        dim3 GridDim((M_Global * N_Global) / REDUCTION_ELEMENT_PER_THREADBLOCK, 1, 1);
+        dim3 BlockDim(WARP_SIZE, 1, 1);
+        SplitK_Reduction<<<GridDim, BlockDim, 0, stream>>>(C, Reduction_Workspace, M_Global, N_Global, Split_K);
+    }
+    return cudaGetLastError();
+}
+
+
+cudaError_t fp16_linear_kernel(cudaStream_t    stream,
+                              const half     *Weight,  // 4B = 4 * 8b
+                            //   const half      *Scales,  // 16b
+                              const half      *B,
+                              half            *C,
+                              const size_t    M_Global,
+                              const size_t    N_Global,
+                              const size_t    K_Global, 
+                              float           *Reduction_Workspace,  // Reduction_Workspace_Size = Split_K * M_Global * N_Global * sizeof(fp32)
+                              int             Split_K)
+{
+    assert(M_Global % 32 == 0);
+    assert(K_Global % 128 == 0);
+    assert(N_Global % 32 == 0);
+
+    half *Scales = NULL;  // TODO
+    half *Scales_B = NULL;  // TODO
+
+    // Work around to support more N shapes:
+    size_t N_PowerOf2;
+    if(N_Global>0 &&  N_Global<=8)      N_PowerOf2 = 8;
+    if(N_Global>8 &&  N_Global<=16)     N_PowerOf2 = 16;
+    if(N_Global>16 && N_Global<=32)     N_PowerOf2 = 32;
+    if(N_Global>32 && N_Global<=64)     N_PowerOf2 = 64;
+    if(N_Global>64 && N_Global<=128)    N_PowerOf2 = 128;
+    if(N_Global>128)                    N_PowerOf2 = ((N_Global-1)/128+1) * 128;
+
+    if (Split_K == 1) {
+        switch (N_PowerOf2) {
+            case 8:     FP16_Kernel_Ex<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, B, C, M_Global, N_Global, K_Global, Split_K);  break;
+            case 16:    FP16_Kernel_Ex<TilingConfig<4, 1, 2>, half>(stream, Weight, Scales, B, C, M_Global, N_Global, K_Global, Split_K);  break;
+            case 32:    FP16_Kernel_Ex<TilingConfig<4, 1, 4>, half>(stream, Weight, Scales, B, C, M_Global, N_Global, K_Global, Split_K);  break;
+            case 64:    FP16_Kernel_Ex<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, B, C, M_Global, N_Global, K_Global, Split_K);  break;
+            case 128:   FP16_Kernel_Ex<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, B, C, M_Global, N_Global, K_Global, Split_K);  break;
+            default:    if (N_PowerOf2 % 128 != 0) {
+                            printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
+                            return cudaErrorUnknown;
+                        }
+                        FP16_Kernel_Ex<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, B, C, M_Global, N_Global, K_Global, Split_K);  break;
+        }
+    }
+    else {
+        switch (N_PowerOf2) {
+            case 8:     FP16_Kernel_Ex<TilingConfig<4, 1, 1>, float>(stream, Weight, Scales, B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
+            case 16:    FP16_Kernel_Ex<TilingConfig<4, 1, 2>, float>(stream, Weight, Scales, B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
+            case 32:    FP16_Kernel_Ex<TilingConfig<4, 1, 4>, float>(stream, Weight, Scales, B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
+            case 64:    FP16_Kernel_Ex<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
+            case 128:   FP16_Kernel_Ex<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
+            default:    if (N_PowerOf2 % 128 != 0) {
+                            printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
+                            return cudaErrorUnknown;
+                        }
+                        FP16_Kernel_Ex<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K);  break;
         }
         // Reduction for SplitK
         dim3 GridDim((M_Global * N_Global) / REDUCTION_ELEMENT_PER_THREADBLOCK, 1, 1);
@@ -308,7 +551,7 @@ cudaError_t bin_pack_linear_kernel(cudaStream_t    stream,
 
     half *Scales = NULL;  // TODO
     half *Scales_B = NULL;  // TODO
-
+    
     if (Split_K == 1) {
         switch (N_PowerOf2) {
             case 8:     Kernel_Ex_W1A1_Pack_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
@@ -341,6 +584,177 @@ cudaError_t bin_pack_linear_kernel(cudaStream_t    stream,
         dim3 BlockDim(WARP_SIZE, 1, 1);
         SplitK_Reduction<<<GridDim, BlockDim, 0, stream>>>(C, Reduction_Workspace, M_Global, N_Global, Split_K);
     }
+
+    return cudaGetLastError();
+}
+
+
+
+cudaError_t w2a3_pack_linear_kernel(cudaStream_t    stream,
+                              const uint32_t     *Weight,  // 4B = 4 * 8b
+                            //   const half      *Scales,  // 16b
+                            //   const half      *Scales_B,  // 16b
+                              const half     *B,  // 4B = 4 * 8b
+                              half            *C,
+                              const size_t    M_Global,
+                              const size_t    N_Global,
+                              const size_t    K_Global, 
+                              float           *Reduction_Workspace,  // Reduction_Workspace_Size = Split_K * M_Global * N_Global * sizeof(fp32)
+                              int             Split_K,
+                              int             INSTR=XOR_POP)
+{
+    assert(M_Global % 128 == 0);
+    assert(K_Global % 128 == 0);
+    assert(N_Global % 32 == 0);
+
+    // Work around to support more N shapes:
+    size_t N_PowerOf2;
+    if(N_Global>0 &&  N_Global<=8)      N_PowerOf2 = 8;
+    if(N_Global>8 &&  N_Global<=16)     N_PowerOf2 = 16;
+    if(N_Global>16 && N_Global<=32)     N_PowerOf2 = 32;
+    if(N_Global>32 && N_Global<=64)     N_PowerOf2 = 64;
+    if(N_Global>64 && N_Global<=128)    N_PowerOf2 = 128;
+    if(N_Global>128)                    N_PowerOf2 = ((N_Global-1)/128+1) * 128;
+
+    half *Scales = NULL;  // TODO
+    half *Scales_B = NULL;  // TODO
+    if (INSTR==W2A3) {
+        if (Split_K == 1) {
+            switch (N_PowerOf2) {
+                case 8:     Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 16:    Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 32:    Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 64:    Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 128:   Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                default:    if (N_PowerOf2 % 128 != 0) {
+                                printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
+                                return cudaErrorUnknown;
+                            }
+                            Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B,  B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            }
+        }
+        else {
+            switch (N_PowerOf2) {
+                case 8:     Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 1>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 16:    Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 2>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 32:    Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 4>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 64:    Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 128:   Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                default:    if (N_PowerOf2 % 128 != 0) {
+                                printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
+                                return cudaErrorUnknown;
+                            }
+                            Kernel_Ex_W2A3_Pack_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            }
+            // Reduction for SplitK
+            dim3 GridDim((M_Global * N_Global) / REDUCTION_ELEMENT_PER_THREADBLOCK, 1, 1);
+            dim3 BlockDim(WARP_SIZE, 1, 1);
+            SplitK_Reduction<<<GridDim, BlockDim, 0, stream>>>(C, Reduction_Workspace, M_Global, N_Global, Split_K);
+        }
+    } 
+
+    return cudaGetLastError();
+}
+
+
+cudaError_t w2a3_attv_pack_linear_kernel(cudaStream_t    stream,
+                              const half     *Weight,  // 4B = 4 * 8b
+                            //   const half      *Scales,  // 16b
+                            //   const half      *Scales_B,  // 16b
+                              const half     *B,  // 4B = 4 * 8b
+                              half            *C,
+                              const size_t    M_Global,
+                              const size_t    N_Global,
+                              const size_t    K_Global, 
+                              float           *Reduction_Workspace,  // Reduction_Workspace_Size = Split_K * M_Global * N_Global * sizeof(fp32)
+                              int             Split_K,
+                              int             INSTR=ATTV_W2A3)
+{
+    assert(M_Global % 128 == 0);
+    assert(K_Global % 128 == 0);
+    assert(N_Global % 32 == 0);
+
+    // Work around to support more N shapes:
+    size_t N_PowerOf2;
+    if(N_Global>0 &&  N_Global<=8)      N_PowerOf2 = 8;
+    if(N_Global>8 &&  N_Global<=16)     N_PowerOf2 = 16;
+    if(N_Global>16 && N_Global<=32)     N_PowerOf2 = 32;
+    if(N_Global>32 && N_Global<=64)     N_PowerOf2 = 64;
+    if(N_Global>64 && N_Global<=128)    N_PowerOf2 = 128;
+    if(N_Global>128)                    N_PowerOf2 = ((N_Global-1)/128+1) * 128;
+
+    half *Scales = NULL;  // TODO
+    half *Scales_B = NULL;  // TODO
+
+    if (INSTR==ATTV_W2A3) {
+        if (Split_K == 1) {
+            switch (N_PowerOf2) {
+                case 8:     Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 16:    Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 32:    Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 64:    Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 128:   Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                default:    if (N_PowerOf2 % 128 != 0) {
+                                printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
+                                return cudaErrorUnknown;
+                            }
+                            Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B,  B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            }
+        }
+        else {
+            switch (N_PowerOf2) {
+                case 8:     Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 1>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 16:    Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 2>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 32:    Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 4>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 64:    Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 128:   Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                default:    if (N_PowerOf2 % 128 != 0) {
+                                printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
+                                return cudaErrorUnknown;
+                            }
+                            Kernel_Ex_ATTV_W2A3_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            }
+            // Reduction for SplitK
+            dim3 GridDim((M_Global * N_Global) / REDUCTION_ELEMENT_PER_THREADBLOCK, 1, 1);
+            dim3 BlockDim(WARP_SIZE, 1, 1);
+            SplitK_Reduction<<<GridDim, BlockDim, 0, stream>>>(C, Reduction_Workspace, M_Global, N_Global, Split_K);
+        }
+    } else if (INSTR == QK_W2A3) {
+        if (Split_K == 1) {
+            switch (N_PowerOf2) {
+                case 8:     Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 16:    Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 32:    Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 1>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 64:    Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 128:   Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                default:    if (N_PowerOf2 % 128 != 0) {
+                                printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
+                                return cudaErrorUnknown;
+                            }
+                            Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 8>, half>(stream, Weight, Scales, Scales_B,  B, C, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            }
+        }
+        else {
+            switch (N_PowerOf2) {
+                case 8:     Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 1>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 16:    Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 2>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 32:    Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 4>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 64:    Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                case 128:   Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+                default:    if (N_PowerOf2 % 128 != 0) {
+                                printf("FP6LLM_API Error: Unsupported N dimension %d!\n", N_PowerOf2);
+                                return cudaErrorUnknown;
+                            }
+                            Kernel_Ex_QK_W2A3_MM<TilingConfig<4, 1, 8>, float>(stream, Weight, Scales, Scales_B,  B, Reduction_Workspace, M_Global, N_Global, K_Global, Split_K, INSTR);  break;
+            }
+            // Reduction for SplitK
+            dim3 GridDim((M_Global * N_Global) / REDUCTION_ELEMENT_PER_THREADBLOCK, 1, 1);
+            dim3 BlockDim(WARP_SIZE, 1, 1);
+            SplitK_Reduction<<<GridDim, BlockDim, 0, stream>>>(C, Reduction_Workspace, M_Global, N_Global, Split_K);
+        }
+    }
+    
+
     return cudaGetLastError();
 }
 

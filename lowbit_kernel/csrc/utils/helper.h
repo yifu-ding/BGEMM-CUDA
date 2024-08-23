@@ -41,12 +41,12 @@ void print_binary(half *inp, const char *array_name, int M, int K) {
     printf("\n"); */
     FILE *fp;//文件指针
     if (array_name[0] == 'A') {
-        fp = fopen ("A_bin_bug.txt", "w+");
+        fp = fopen ("A_16bit_h.txt", "w+");
     } else {
-        fp = fopen ("B_bin_bug.txt", "w+");
+        fp = fopen ("B_16bit_h.txt", "w+");
     }
     for (int i=1; i<=M*K; ++i) {
-        // fprintf(fp, "%d",  (int)(inp[i-1])); // pybind会报错
+        fprintf(fp, "%d",  (int)(inp[i-1])); // pybind会报错
         if (i % 32 == 0) fprintf(fp, " ");
         if (i % K == 0) {
             fprintf(fp, "\n");  // M elements per row

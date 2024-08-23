@@ -86,53 +86,64 @@ int main(int argc, char** argv)
     // assert(M_GLOBAL%256==0);                 // Currently, M_GLOBAL must be a multiple of 256.
     // assert(K_GLOBAL%64==0);                  // Currently, K_GLOBAL must be a multiple of 64.
 
+
+
+    //////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////
     // Matrices in quantized Bin models with faked values.
     // unsigned char: 1 Byte = 0~255
-    unsigned char* A_1bit_h  = (unsigned char*)malloc(M_GLOBAL*K_GLOBAL*1/8);       CheckMallocCPU(A_1bit_h, __LINE__);     // Weight matrix with FP6 values, stored in row-major.
-    for(size_t i=0; i<M_GLOBAL*K_GLOBAL*1/8; i++)   A_1bit_h[i] = rand() % 256;    // noqa                                         // Random initialization.
+    // unsigned char* A_1bit_h  = (unsigned char*)malloc(M_GLOBAL*K_GLOBAL*1/8);       CheckMallocCPU(A_1bit_h, __LINE__);     // Weight matrix with FP6 values, stored in row-major.
+    // for(size_t i=0; i<M_GLOBAL*K_GLOBAL*1/8; i++)   A_1bit_h[i] = rand() % 256;    // noqa                                         // Random initialization.
 
-    half*          A_Scale_h = (half*)malloc(M_GLOBAL*sizeof(half));                CheckMallocCPU(A_Scale_h, __LINE__);    // Quantization Scales with FP16 values.
-    for(size_t i=0; i<M_GLOBAL; i++)                A_Scale_h[i] = 1.0f;// float(rand()%256)/64.0f;                                 // Scale
-    // Generaing FP16 format of the Weight Matrix
-    half* A_16bit_h = (half*) malloc(M_GLOBAL*K_GLOBAL*sizeof(half));                           CheckMallocCPU(A_16bit_h, __LINE__);
-    DeQuantMatrix_B1_To_FP16(A_16bit_h, A_1bit_h, M_GLOBAL, K_GLOBAL, A_Scale_h);
-    // In-place weight pre-packing
-    // weight_matrix_prepacking((int*)A_1bit_h, (int*)A_1bit_h, M_GLOBAL, K_GLOBAL);  // noqa: no need?
-    #ifdef SAVE_IO
-        print_binary(A_16bit_h,  "A_16bit_h",  M_GLOBAL, K_GLOBAL);
-    #endif
-
-    // Matrices in quantized Bin models with faked values.
-    unsigned char* B_1bit_h  = (unsigned char*)malloc(N_GLOBAL*K_GLOBAL*1/8);       CheckMallocCPU(B_1bit_h, __LINE__);     // Weight matrix with FP6 values, stored in row-major.
-    for(size_t i=0; i<N_GLOBAL*K_GLOBAL*1/8; i++)   B_1bit_h[i] = rand() % 256;    // noqa                                         // Random initialization.
-    #ifdef SAVE_IO
-        print_uint32((uint32_t*) B_1bit_h, "B_1bit_h", N_GLOBAL, K_GLOBAL);
-    #endif
-    half*          B_Scale_h = (half*)malloc(N_GLOBAL*sizeof(half));                CheckMallocCPU(B_Scale_h, __LINE__);    // Quantization Scales with FP16 values.
-    for(size_t i=0; i<N_GLOBAL; i++)                B_Scale_h[i] = 1.0; // float(rand()%256)/64.0f;                                 // Scale
-    // Generaing FP16 format of the Weight Matrix
-    // half* B_16bit_h = (half*) malloc(N_GLOBAL*K_GLOBAL*sizeof(half));                           CheckMallocCPU(B_16bit_h, __LINE__);
-    // DeQuantMatrix_B1_To_FP16(B_16bit_h, B_1bit_h, N_GLOBAL, K_GLOBAL, B_Scale_h);
+    // half*          A_Scale_h = (half*)malloc(M_GLOBAL*sizeof(half));                CheckMallocCPU(A_Scale_h, __LINE__);    // Quantization Scales with FP16 values.
+    // for(size_t i=0; i<M_GLOBAL; i++)                A_Scale_h[i] = 1.0f;// float(rand()%256)/64.0f;                                 // Scale
+    // // Generaing FP16 format of the Weight Matrix
+    // half* A_16bit_h = (half*) malloc(M_GLOBAL*K_GLOBAL*sizeof(half));                           CheckMallocCPU(A_16bit_h, __LINE__);
+    // DeQuantMatrix_B1_To_FP16(A_16bit_h, A_1bit_h, M_GLOBAL, K_GLOBAL, A_Scale_h);
+    // // In-place weight pre-packing
+    // // weight_matrix_prepacking((int*)A_1bit_h, (int*)A_1bit_h, M_GLOBAL, K_GLOBAL);  // noqa: no need?
     // #ifdef SAVE_IO
-    //     print_binary(B_16bit_h, "B_16bit_h", N_GLOBAL, K_GLOBAL);
+    //     print_binary(A_16bit_h,  "A_16bit_h",  M_GLOBAL, K_GLOBAL);
     // #endif
-    // Devices Memory
-    uint32_t *  A_1bit;  // 1B = 8b
-    unsigned char *  A_1bit_convert = (unsigned char*)malloc(M_GLOBAL*K_GLOBAL*1/8);       CheckMallocCPU(A_1bit_convert, __LINE__); ;  // 1B = 8b
-    half*           A_Scale;  // 16b
-    half*           A_16bit;  // 16b
-    cudaMalloc(reinterpret_cast<void**>(&A_1bit),  M_GLOBAL*K_GLOBAL*1/8);             CheckMallocCUDA(A_1bit, __LINE__);
+
+    // // Matrices in quantized Bin models with faked values.
+    // unsigned char* B_1bit_h  = (unsigned char*)malloc(N_GLOBAL*K_GLOBAL*1/8);       CheckMallocCPU(B_1bit_h, __LINE__);     // Weight matrix with FP6 values, stored in row-major.
+    // for(size_t i=0; i<N_GLOBAL*K_GLOBAL*1/8; i++)   B_1bit_h[i] = rand() % 256;    // noqa                                         // Random initialization.
+    // #ifdef SAVE_IO
+    //     print_uint32((uint32_t*) B_1bit_h, "B_1bit_h", N_GLOBAL, K_GLOBAL);
+    // #endif
+    // half*          B_Scale_h = (half*)malloc(N_GLOBAL*sizeof(half));                CheckMallocCPU(B_Scale_h, __LINE__);    // Quantization Scales with FP16 values.
+    // for(size_t i=0; i<N_GLOBAL; i++)                B_Scale_h[i] = 1.0; // float(rand()%256)/64.0f;                                 // Scale
+    // // Generaing FP16 format of the Weight Matrix
+    // // half* B_16bit_h = (half*) malloc(N_GLOBAL*K_GLOBAL*sizeof(half));                           CheckMallocCPU(B_16bit_h, __LINE__);
+    // // DeQuantMatrix_B1_To_FP16(B_16bit_h, B_1bit_h, N_GLOBAL, K_GLOBAL, B_Scale_h);
+    // // #ifdef SAVE_IO
+    // //     print_binary(B_16bit_h, "B_16bit_h", N_GLOBAL, K_GLOBAL);
+    // // #endif
+    // // Devices Memory
+    // uint32_t *  A_1bit;  // 1B = 8b
+    // unsigned char *  A_1bit_convert = (unsigned char*)malloc(M_GLOBAL*K_GLOBAL*1/8);       CheckMallocCPU(A_1bit_convert, __LINE__); ;  // 1B = 8b
+    // half*           A_Scale;  // 16b
+    // half*           A_16bit;  // 16b
+    // cudaMalloc(reinterpret_cast<void**>(&A_1bit),  M_GLOBAL*K_GLOBAL*1/8);             CheckMallocCUDA(A_1bit, __LINE__);
     // cudaMalloc(reinterpret_cast<void**>(&A_Scale), M_GLOBAL*sizeof(half));             CheckMallocCUDA(A_Scale, __LINE__);
     // cudaMalloc(reinterpret_cast<void**>(&A_16bit),          M_GLOBAL*K_GLOBAL*sizeof(half));    CheckMallocCUDA(A_16bit, __LINE__);
-    // Memory Copy from CPU to GPU
-    convert_uchar2uint32_order(A_1bit_convert, A_1bit_h, M_GLOBAL, K_GLOBAL);
-    #ifdef SAVE_IO
-        print_uint32((uint32_t*) A_1bit_convert,  "A_1bit_h",  M_GLOBAL, K_GLOBAL);
-    #endif
-    cudaMemcpy(A_1bit,     A_1bit_convert,  M_GLOBAL*K_GLOBAL*1/8,          cudaMemcpyHostToDevice);
+    // // Memory Copy from CPU to GPU
+    // convert_uchar2uint32_order(A_1bit_convert, A_1bit_h, M_GLOBAL, K_GLOBAL);
+    // #ifdef SAVE_IO
+    //     print_uint32((uint32_t*) A_1bit_convert,  "A_1bit_h",  M_GLOBAL, K_GLOBAL);
+    // #endif
+    // cudaMemcpy(A_1bit,     A_1bit_convert,  M_GLOBAL*K_GLOBAL*1/8,          cudaMemcpyHostToDevice);
     // cudaMemcpy(A_Scale,    A_Scale_h,          M_GLOBAL*sizeof(half),          cudaMemcpyHostToDevice);
     // cudaMemcpy(A_16bit,             A_16bit_h,          M_GLOBAL*K_GLOBAL*sizeof(half), cudaMemcpyHostToDevice);
-    checkLastCudaError(__LINE__);
+    // checkLastCudaError(__LINE__);
+
+    //////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////
+    //////////////////////////////////////////////////////////////////////////////////////
+
+    
     // Devices Memory
     // unsigned char*  B_1bit;  // 1B = 8b
     // half*           B_Scale;  // 16b
@@ -151,17 +162,17 @@ int main(int argc, char** argv)
     // fp16 matrix initialization for weight and activation
     
     // matrix A
-    // half* A_h = (half*)malloc(sizeof(half) *  M_GLOBAL * K_GLOBAL); CheckMallocCPU(A_h);       // col major 
-    // for (size_t i = 0; i < M_GLOBAL * K_GLOBAL; i++)
-    //     A_h[i] = __float2half_rn(static_cast<float>((rand() % 256)) / 128.0f - 1.0f);
-    // #ifdef SAVE_IO
-    //     print_half(A_h,  "A_fp16", M_GLOBAL, K_GLOBAL); 
-    // #endif
+    half* A_h = (half*)malloc(sizeof(half) *  M_GLOBAL * K_GLOBAL); CheckMallocCPU(A_h);       // col major 
+    for (size_t i = 0; i < M_GLOBAL * K_GLOBAL; i++)
+        A_h[i] = __float2half_rn(static_cast<float>((rand() % 256)) / 128.0f - 1.0f);
+    #ifdef SAVE_IO
+        print_half(A_h,  "A_fp16", M_GLOBAL, K_GLOBAL); 
+    #endif
     // Device memory
-    // half* A            = NULL;
-    // cudaMalloc(reinterpret_cast<void**>(&A), sizeof(half) * M_GLOBAL * K_GLOBAL);               CheckMallocCUDA(A, __LINE__);
-    // // Memory Copy from CPU to GPU
-    // cudaMemcpy(A, A_h, sizeof(half) * M_GLOBAL * K_GLOBAL, cudaMemcpyHostToDevice);
+    half* A            = NULL;
+    cudaMalloc(reinterpret_cast<void**>(&A), sizeof(half) * M_GLOBAL * K_GLOBAL);               CheckMallocCUDA(A, __LINE__);
+    // Memory Copy from CPU to GPU
+    cudaMemcpy(A, A_h, sizeof(half) * M_GLOBAL * K_GLOBAL, cudaMemcpyHostToDevice);
 
     half* B_h = (half*)malloc(sizeof(half) * K_GLOBAL * N_GLOBAL); CheckMallocCPU(B_h);       // col major 
     for (size_t i = 0; i < N_GLOBAL * K_GLOBAL; i++)
@@ -183,7 +194,7 @@ int main(int argc, char** argv)
 
     // matrix A
     for (size_t i = 0; i < M_GLOBAL * K_GLOBAL; i++) {
-        if (__half2float(A_16bit_h[i]) > 0.0f) {
+        if (__half2float(A_h[i]) > 0.0f) {
             A_h_cublas[i] = __float2half_rn(-1.0f);
         } else {
             A_h_cublas[i] = __float2half_rn(1.0f);
@@ -281,16 +292,13 @@ int main(int argc, char** argv)
     milliseconds_cublas = milliseconds_cublas / BENCHMARK_ITERATION;
     float tflops_cublas = static_cast<double>((static_cast<double>(M_GLOBAL) * N_GLOBAL * K_GLOBAL * 2) / (milliseconds_cublas / 1000.)) / 1e12;
     //
-
-
+    
     half* D_cublas_h = NULL;  // col major
     D_cublas_h       = (half*)malloc(sizeof(half) * M_GLOBAL * N_GLOBAL);   CheckMallocCPU(D_cublas_h);
     cudaMemcpy(D_cublas_h, D_cublas, sizeof(half) * M_GLOBAL * N_GLOBAL, cudaMemcpyDeviceToHost);  // Col Major
     cudaFree(D_cublas);  
     
 
-
-    
     //////////////////////////////////////////////////////////////////////////////////
     //////////////////////////////////////////////////////////////////////////////////
     // checkLastCudaError(__LINE__);
@@ -347,15 +355,15 @@ int main(int argc, char** argv)
     cudaFree(D_fp);
     cudaFree(Reduction_Workspace);
 
-    #endif 
-
     //////////////////////////////////////////////////////////////////////////////////
     //////////////////////////////////////////////////////////////////////////////////
    
+    #endif 
+    
     // print_half(D_cublas_h, "D_cublas_h", M_GLOBAL, N_GLOBAL);
 
     // checkLastCudaError(__LINE__);
-    printf("Launching BGEMM...\n");
+    printf("Launching W2A3 Att*V...\n");
     half* D_bin = NULL;
     cudaMalloc(reinterpret_cast<void**>(&D_bin), sizeof(half) * M_GLOBAL * N_GLOBAL); CheckMallocCUDA(D_bin);
     cudaMemset(D_bin, 0, sizeof(half) * M_GLOBAL * N_GLOBAL);
@@ -387,13 +395,13 @@ int main(int argc, char** argv)
     {
         // #pragma omp parallel num_threads(NUM_THREADS)
         // {
-        w2a3_pack_linear_kernel(  0,
-                        (uint32_t*) A_1bit, // A_Scale, B_Scale,
+        w2a3_attv_pack_linear_kernel(  0,
+                        A, // A_Scale, B_Scale,
                         B,
                         D_bin,
                         M_GLOBAL, N_GLOBAL, K_GLOBAL,
                         Reduction_Workspace,  
-                        Split_K, 3);
+                        Split_K, 4);
         // }
     }
     // }
@@ -404,13 +412,13 @@ int main(int argc, char** argv)
     {   
         // #pragma omp parallel num_threads(NUM_THREADS)
         // {
-        w2a3_pack_linear_kernel(  0,
-                        (uint32_t*) A_1bit, // A_Scale, B_Scale,
+        w2a3_attv_pack_linear_kernel(  0,
+                        A, // A_Scale, B_Scale,
                         B,
                         D_bin,
                         M_GLOBAL, N_GLOBAL, K_GLOBAL,
                         Reduction_Workspace,  
-                        Split_K, 3);
+                        Split_K, 4);
         // }
     }
     // }
@@ -479,9 +487,8 @@ int main(int argc, char** argv)
     printf("Verifying correctness of the computations...\n");
     totalRelativeError_bin  = ComputeTotalError(D_cublas_h, D_bin_h, M_GLOBAL, N_GLOBAL);
     PrintPerformance("cuBLAS", milliseconds_cublas, tflops_cublas, 0.0);
-    free(D_cublas_h);
-    #endif
     PrintPerformance("D_fp_h", milliseconds_fp, tflops_fp, INFINITY);
+    #endif
     PrintPerformance("BGEMM", milliseconds_bin, tflops_bin, totalRelativeError_bin);
     #ifdef SAVE_IO
         PrintResult("BGEMM", 100, D_cublas_h, D_bin_h, M_GLOBAL, N_GLOBAL);
@@ -490,7 +497,7 @@ int main(int argc, char** argv)
         PrintMismatch("BGEMM", 100, 0.000, D_cublas_h, D_bin_h, M_GLOBAL, N_GLOBAL);
     #endif
 
-    
+    free(D_cublas_h);
     free(D_bin_h);
     return 0;
 }

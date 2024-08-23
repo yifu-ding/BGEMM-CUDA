@@ -209,6 +209,25 @@ MMA_B1B1_M8N8K128_AND(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32
           "r"(c[0]), "r"(c[1]));
 }
 
+
+
+__device__ __forceinline__ void
+MMA_FP16_M16N8K16(float c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
+{
+
+    asm volatile(
+        "mma.sync.aligned.m16n8k16.row.col.f32.f16.f16.f32 "
+        "{%0,%1,%2,%3}, "
+        "{%4,%5,%6,%7}, "
+        "{%8,%9}, "
+        "{%10,%11,%12,%13};\n\t"
+        : "=f"(c[0]), "=f"(c[1]),"=f"(c[2]), "=f"(c[3])
+        : "r"(a[0]), "r"(a[1]), "r"(a[2]), "r"(a[3]), 
+          "r"(b[0]), "r"(b[1]), 
+          "f"(c[0]), "f"(c[1]), "f"(c[2]), "f"(c[3]));
+}
+
+
 __device__ __forceinline__ void
 K_SUB_2_XORPOP(int32_t __restrict__ c[], int32_t __restrict__ tmp[], int32_t __restrict__ K)
 {
@@ -340,31 +359,172 @@ ATTN_MM_PTX(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restr
 }
 
 
+
 __device__ __forceinline__ void
 MMA_W2A3_M8N8K128(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
 {   
+
+    uint32_t tmp[2];
+
+    // asm volatile("mov.b32 %0,0x0; \n\t": "=r"(tmp[0]));
+    // asm volatile("mov.b32 %0,0x0; \n\t": "=r"(tmp[1]));
+
+   
     asm volatile(
         "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc "
         "{%0,%1}, "
         "{%2}, "
         "{%3}, "
-        "{%4,%5};\n"
-        : "=r"(c[0]), "=r"(c[1])
+        "{%4,%5};\n\t"
+        : "=r"(tmp[0]), "=r"(tmp[1])
         : "r"(a[0]), 
           "r"(b[1]),
           "r"(0x0), "r"(0x0));
+
+    asm volatile("sub.s32 %0,%1,%2; \n\t": "=r"(c[0]) : "r"(c[0]), "r"(tmp[0]));
+    asm volatile("sub.s32 %0,%1,%2; \n\t": "=r"(c[1]) : "r"(c[1]), "r"(tmp[1]));
 
     asm volatile(
         "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.xor.popc "
         "{%0,%1}, "
         "{%2}, "
         "{%3}, "
-        "{%4,%5};\n"
+        "{%4,%5};\n\t"
         : "=r"(c[0]), "=r"(c[1])
         : "r"(a[0]), 
           "r"(b[0]),
-          "r"(-c[0]), "r"(-c[1]));
+          "r"(c[0]), "r"(c[1]));
+
+    // asm volatile("add.s32 %0,%1,%2; \n\t": "=r"(c[0]) : "r"(c[0]), "r"(tmp[0]));
+    // asm volatile("add.s32 %0,%1,%2; \n\t": "=r"(c[1]) : "r"(c[1]), "r"(tmp[1]));
+
+
 }
+
+
+
+
+__device__ __forceinline__ void
+MMA_W2A3_M8N8K128_attv(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
+{   
+
+    uint32_t tmp[2];
+
+    // asm volatile("mov.b32 %0,0x0; \n\t": "=r"(tmp[0]));
+    // asm volatile("mov.b32 %0,0x0; \n\t": "=r"(tmp[1]));
+
+   
+    asm volatile(
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n\t"
+        : "=r"(tmp[0]), "=r"(tmp[1])
+        : "r"(a[0]), 
+          "r"(b[1]),
+          "r"(0x0), "r"(0x0));
+
+    asm volatile("sub.s32 %0,%1,%2; \n\t": "=r"(c[0]) : "r"(c[0]), "r"(tmp[0]));
+    asm volatile("sub.s32 %0,%1,%2; \n\t": "=r"(c[1]) : "r"(c[1]), "r"(tmp[1]));
+
+    asm volatile(
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n\t"
+        : "=r"(c[0]), "=r"(c[1])
+        : "r"(a[0]), 
+          "r"(b[0]),
+          "r"(c[0]), "r"(c[1]));
+
+    // asm volatile("add.s32 %0,%1,%2; \n\t": "=r"(c[0]) : "r"(c[0]), "r"(tmp[0]));
+    // asm volatile("add.s32 %0,%1,%2; \n\t": "=r"(c[1]) : "r"(c[1]), "r"(tmp[1]));
+
+
+}
+
+
+
+__device__ __forceinline__ void
+MMA_W2A3_M8N8K128_qk(int32_t __restrict__ c[], uint32_t __restrict__ *a, uint32_t __restrict__ *b)
+{   
+
+    uint32_t tmp[2];
+
+    // asm volatile("mov.b32 %0,0x0; \n\t": "=r"(tmp[0]));
+    // asm volatile("mov.b32 %0,0x0; \n\t": "=r"(tmp[1]));
+
+   
+    asm volatile(
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n\t"
+        : "=r"(tmp[0]), "=r"(tmp[1])
+        : "r"(a[0]), 
+          "r"(b[1]),
+          "r"(0x0), "r"(0x0));
+
+    asm volatile(
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n\t"
+        : "=r"(tmp[0]), "=r"(tmp[1])
+        : "r"(a[1]), 
+          "r"(b[0]),
+          "r"(tmp[0]), "r"(tmp[1]));
+
+    asm volatile("sub.s32 %0,%1,%2; \n\t": "=r"(c[0]) : "r"(c[0]), "r"(tmp[0]));
+    asm volatile("sub.s32 %0,%1,%2; \n\t": "=r"(c[1]) : "r"(c[1]), "r"(tmp[1]));
+
+    asm volatile(
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n\t"
+        : "=r"(tmp[0]), "=r"(tmp[1])
+        : "r"(a[1]), 
+          "r"(b[1]),
+          "r"(0x0), "r"(0x0));
+    
+    asm volatile(
+        "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+        "{%0,%1}, "
+        "{%2}, "
+        "{%3}, "
+        "{%4,%5};\n\t"
+        : "=r"(tmp[0]), "=r"(tmp[1])
+        : "r"(a[0]), 
+          "r"(b[0]),
+          "r"(tmp[0]), "r"(tmp[1]));
+
+    asm volatile("add.s32 %0,%1,%2; \n\t": "=r"(c[0]) : "r"(c[0]), "r"(tmp[0]));
+    asm volatile("add.s32 %0,%1,%2; \n\t": "=r"(c[1]) : "r"(c[1]), "r"(tmp[1]));
+
+
+    // asm volatile(
+    //     "mma.sync.aligned.m8n8k128.row.col.s32.b1.b1.s32.and.popc "
+    //     "{%0,%1}, "
+    //     "{%2}, "
+    //     "{%3}, "
+    //     "{%4,%5};\n\t"
+    //     : "=r"(c[0]), "=r"(c[1])
+    //     : "r"(a[0]), 
+    //       "r"(b[0]),
+    //       "r"(c[0]), "r"(c[1]));
+
+    // asm volatile("add.s32 %0,%1,%2; \n\t": "=r"(c[0]) : "r"(c[0]), "r"(tmp[0]));
+    // asm volatile("add.s32 %0,%1,%2; \n\t": "=r"(c[1]) : "r"(c[1]), "r"(tmp[1]));
+
+
+}
+
 
 __device__ __forceinline__ void
 SIGN_32_HALF_TO_UINT32(uint32_t __restrict__ d[], half __restrict__ *a)
