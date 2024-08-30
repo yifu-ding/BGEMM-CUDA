@@ -137,7 +137,7 @@ static void Kernel_Ex_Bin(cudaStream_t    stream,
 
 
 template<typename TilingConfig, typename OutputDataType>
-static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
+static void Kernel_Ex_BGEMM_Pack_MM(cudaStream_t    stream,
                       const half     *Weight, // 4B = 32b
                       const half      *Scales, // 16b
                       const half      *Scales_B, // 16b
@@ -184,6 +184,53 @@ static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
 }
 
 
+
+template<typename TilingConfig, typename OutputDataType>
+static void Kernel_Ex_W1A1_Pack_MM(cudaStream_t    stream,
+                      const uint32_t     *Weight, // 4B = 32b
+                      const half      *Scales, // 16b
+                      const half      *Scales_B, // 16b
+                      const half     *B,
+                    //   const half      *B,
+                      OutputDataType  *C,
+                      const size_t    M_Global,
+                      const size_t    N_Global,
+                      const size_t    K_Global, 
+                      int             Split_K,
+                      int             INSTR) 
+{   
+    #ifdef DEBUG_MODE
+        printf("\n");
+        printf("Launcher.cu->Kernel_Ex_W1A1_Pack_MM():\n");
+        printf("M: %d, N: %d, K: %d, SplitK: %d\n", M_Global, N_Global, K_Global, Split_K);
+        printf("TILE_M_BIN: %d, TILE_K_BIN: %d, TILE_N_BIN: %d\n", TilingConfig::TILE_M_BIN, TilingConfig::TILE_K_BIN, TilingConfig::TILE_N_BIN);
+        // printf("Weight: %u\n", Weight);
+    #endif
+    // static size_t SHMEM_SZ = max(WEIGHT_PER_UNIT_BIN*2, TilingConfig::SMEM_SIZE_C_TILE);
+    static size_t SHMEM_SZ = WEIGHT_PER_UNIT_BIN*3; // double buffer for both weight and act (128x128 per unit)
+    cudaFuncSetAttribute(PACK_W1A1_Kernel<TilingConfig, OutputDataType>, cudaFuncAttributeMaxDynamicSharedMemorySize, SHMEM_SZ);
+    size_t  dimN = (N_Global-1) / TilingConfig::TILE_N_BIN + 1; // (32-1)/32+1 = 1
+    size_t  dimM = M_Global * Split_K / TilingConfig::TILE_M_W2A3; // 256*1/128 = 2
+    dim3    GridDim(dimN, dimM, 1);  // 1,2,1
+    dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS, 1, 1); // 128, 1, 1
+    // dim3    BlockDim(WARP_SIZE * TilingConfig::BLOCK_WARPS_BIN, 1, 1); // 32/64, 1, 1
+    //
+    #ifdef DEBUG_MODE
+        printf("GridDim.x: %d, GridDim.y: %d, GridDim.z: %d, BlockDim.x: %d, BlockDim.y: %d, BlockDim.z: %d SHMEM_SZ: %d\n",
+                GridDim.x, GridDim.y, GridDim.z, BlockDim.x, BlockDim.y, BlockDim.z, SHMEM_SZ);
+        printf("\n");
+    #endif
+    PACK_W1A1_Kernel<TilingConfig, OutputDataType><<<GridDim, BlockDim, SHMEM_SZ, stream>>>
+                (Weight, Scales, Scales_B, B, C, M_Global, N_Global, K_Global, Split_K, INSTR);
+    /* cudaDeviceProp deviceProp;
+    checkCudaErrors(cudaGetDeviceProperties(&deviceProp, dev));
+    checkCudaErrors(cudaFuncSetAttribute(
+      apmm_w1a1, cudaFuncAttributeMaxDynamicSharedMemorySize,
+      SHMEM_SZ));
+    checkKernelErrors(
+              (apmm_w1a1<<<deviceProp.multiProcessorCount, THREADS_PER_BLOCK,
+                                    SHMEM_SZ>>>((int4*)Weight, (int4*)B, (int*)C, M_Global, N_Global, K_Global, 0, 0))); */
+}
 
 
 template<typename TilingConfig, typename OutputDataType>

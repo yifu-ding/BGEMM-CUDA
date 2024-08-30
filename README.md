@@ -1,8 +1,8 @@
-# BGEMM
+# BGEMM & BWTA (Binary Weight and Ternary Activation)
 
-This is a repository for Binary General Matrix Multiply (BGEMM) by customized CUDA kernel. Thank FP6-LLM for the wheels! 
+This is a repository for Binary General Matrix Multiply (BGEMM) and BWTA (Binary Weight and Ternary Activation) GEMM by customized CUDA kernels. Thank FP6-LLM for the wheels! 
 
-#### Still developing, weak compatibility. Welcome to PR!
+# Still developing...
 
 ## Installation
 
@@ -21,23 +21,6 @@ python3 test_kernel.py
 # tiny training demo of a 3-layer MLP
 python3 test_model_demo.py --model=[bnn_bgemm, bnn_fp16, fp16]  
 ```
-
-
-## Performance
-
-- Require M % 128 == 0, K % 128 == 0, N % 32 == 0. (Will optimize dimention compatibility in future release)
-
-| M     | N (batch size) | K     | SplitK | Iteration | Time/ms |       | Performance/TFLOPs |        |
-| ----- | -------------- | ----- | ------ | --------- | ------- | ----- | ------------------ | ------ |
-|       |                |       |        |           | cuBLAS  | BGEMM | cuBLAS             | BGEMM  |
-| 128   | 32             | 128   | 1      | 10000     | 0.003   | 0.003 | 0.32               | 0.34   |
-| 256   | 32             | 256   | 1      | 10000     | 0.009   | 0.004 | 0.45               | 1.19   |
-| 1024  | 32             | 1024  | 1      | 10000     | 0.009   | 0.006 | 7.83               | 10.69  |
-| 2048  | 32             | 2048  | 1      | 10000     | 0.023   | 0.009 | 11.86              | 30.03  |
-| 13824 | 128            | 5120  | 1      | 10000     | 0.25    | 0.073 | 72.61              | 248.71 |
-| 5120  | 128            | 13824 | 1      | 10000     | 0.237   | 0.087 | 76.38              | 208.87 |
-| 22016 | 128            | 8192  | 1      | 10000     | 0.743   | 0.162 | 62.13              | 284.6  |
-| 8192  | 128            | 22016 | 1      | 10000     | 0.732   | 0.148 | 63.05              | 312.75 |
 
 ## TODO
 - [x] Pytorch extension and layers (linear and matmul layers (standard matmul with {-1, 1} $\times$ {-1, 1} and $A \times V$ with {0, 1} $\times$ {-1, 1} ) in [bgemm_linear.py](tests/python/bgemm_linear.py)).

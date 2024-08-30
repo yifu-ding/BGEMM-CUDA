@@ -1303,3 +1303,201 @@ __global__ void PACK_W2A3_Kernel(const uint32_t* Weight, const half* S_w, const 
       }
     }
 }
+
+
+template<typename TilingConfig, typename OutputDataType>
+__global__ void PACK_W1A1_Kernel(const uint32_t* Weight, const half* S_w, const half*  S_a, 
+                                  const half *Act,  // 0x7fffa0c22200
+                                  // const half *Act,
+                                  OutputDataType* C,
+                                  const size_t M_Global, const size_t N_Global, const size_t K_Global,
+                                  int Split_K,
+                                  int INSTR) 
+{
+  #ifdef DEBUG_MODE
+    assert(K_Global%TilingConfig::TILE_K_BIN==0);
+    assert(M_Global%TilingConfig::TILE_M_BIN==0);
+    assert( gridDim.y == Split_K * (M_Global/TilingConfig::TILE_M_BIN));
+  #endif
+  // // 2+4 weight split
+  // Dynamic shared memory for FP16 A tiles， 128 Bytes aligned
+  extern __shared__ __align__(128) uint32_t smem_weight_packed_bin[];   // 0x0200
+  half (*smem_act)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1] = reinterpret_cast<half (*)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1]> ( smem_weight_packed_bin + WEIGHT_PER_UNIT_BIN/32*3); // Dynamic shared memory for FP16 Act tiles  // 0x7fffd5002400
+  // __shared__ half QuantScales_w[64*TilingConfig::BLOCK_WARPS];  // static shared memory for quantization scales, 64 row per warp * 4 warps = 512 Bytes
+  // __shared__ half QuantScales_a[64*TilingConfig::BLOCK_WARPS];  // static shared memory for quantization scales, 64 row per warp * 4 warps = 512 Bytes
+  // Thread Block Mapping, considering SplitK
+  const size_t BatchID = blockIdx.y / (M_Global/TilingConfig::TILE_M_W2A3); // 
+  const size_t x = blockIdx.x;                                     // Output Block ID: (BlockID_Row = y; BlockID_Col = x )
+  const size_t y = blockIdx.y % (M_Global/TilingConfig::TILE_M_W2A3);   // Output Block ID: (BlockID_Row = y; BlockID_Col = x )
+  const size_t Tile_Start_M = y * TilingConfig::TILE_M_W2A3;
+  const size_t Tile_Start_N = x * TilingConfig::TILE_N_BIN; // x*32
+  const size_t NumColumnToCopy = (N_Global-Tile_Start_N) < TilingConfig::TILE_N_BIN ? (N_Global-Tile_Start_N) : TilingConfig::TILE_N_BIN;
+  const size_t NumBlock_K = K_Global/TilingConfig::TILE_K_BIN;    // K_Global / 128 = 2 
+  const size_t AverageNumBlock_K = NumBlock_K/Split_K;
+  const size_t ExtraNumBlock_K   = NumBlock_K - AverageNumBlock_K * Split_K;
+  size_t NumIter = AverageNumBlock_K;
+  if(BatchID<ExtraNumBlock_K)       NumIter ++;
+  size_t StartBlockID_K = AverageNumBlock_K*BatchID;
+  if(BatchID<ExtraNumBlock_K)       StartBlockID_K += BatchID;
+  else                              StartBlockID_K += ExtraNumBlock_K;
+  // Warp ID.
+  const int warpId = threadIdx.x / WARP_SIZE; // 0,1,2,3
+  int WARP_i = warpId / TilingConfig::BLOCK_COL_WARPS;  // =warpId/1 // WARP_i: row number;  WARP_j: column number
+  // Global Memory Address for Matrix weight and act /////////////////////////////////////////////////////////////////////////
+  // StartPTR for each ThreadBlock(TB)  // global mem 上的地址  
+  const uint32_t* TB_StartGPTR_W = Weight + (y*TilingConfig::BLOCK_ROW_WARPS)*NumBlock_K*(WEIGHT_PER_UNIT_BIN/32/4); // /4 是用来抵消BLOCK_ROW_WARPS
+  const half* TB_StartGPTR_A = Act + (Tile_Start_N * K_Global + StartBlockID_K * TilingConfig::TILE_K_BIN); // 0x7fffa0c22200
+  
+  // // StartPTR for each WARP. // 4x8x128 bit / warp = 128 uint32 
+  const uint32_t* WARP_StartGPTR_W  = TB_StartGPTR_W + WARP_i * NumBlock_K * (WEIGHT_PER_UNIT_BIN/4/32);   // 0x7fffa0c00000
+  // // StartPTR for each WARP, considering SplitK
+  const size_t     WARP_Start_UnitID_K = StartBlockID_K;  // unsigned long = size_t = 32bits
+  WARP_StartGPTR_W  += WARP_Start_UnitID_K * 128;  // noqa
+  // // Copying A tile from Global to Shared, using double-buffer //////////////////////////////////////////////////////////
+  // // StartSPTR for each ThreadBlock // shared mem 上的地址
+  uint32_t* Weight_SPTR = reinterpret_cast<uint32_t*>(smem_weight_packed_bin);   // 0x7fffd5000400
+  // // StartSPTR for each WARP
+  // Weight_SPTR += warpId * HALF_WEIGHT_PER_UNIT/4; // {0,1,2,3}
+  // Weight_SPTR += warpId * WEIGHT_PER_UNIT_BIN/4/32; // 8x128(bit)
+  Weight_SPTR += (warpId * WEIGHT_PER_UNIT_BIN/4/32);
+  // // Pre-fetch of A tile
+  for(int i=0; i<PIPELINE_LEVEL_GMEM-1; i++) { 
+    // CopyFromGlobalToShared_W<2048>(Weight_SPTR+(i*WEIGHT_PER_UNIT_BIN), WARP_StartGPTR_W, K_Global, NumColumnToCopy); // 128*128
+    // WARP_StartGPTR_W += TilingConfig::TILE_K_BIN;  // half
+    // weight 一次拷贝 4x(4x(8x128)) bit, 拷贝一次。然后4组warp指向同一个地址进行mma
+    // 4x(4x(8x128))/8 B 
+    CopyFromGlobalToShared_BinaryW<512>(Weight_SPTR + i*WEIGHT_PER_UNIT_BIN/32, WARP_StartGPTR_W, K_Global);
+    WARP_StartGPTR_W += 4;  //  128 bit = 4 uint32
+    // act 一次拷贝 4x(8x128) bit
+    CopyFromGlobalToShared_A_W2A3<TilingConfig::TILE_N_BIN, TilingConfig::BLOCK_WARPS>(smem_act+(i*TilingConfig::TILE_K_BIN), TB_StartGPTR_A, K_Global, NumColumnToCopy);
+    TB_StartGPTR_A += TilingConfig::TILE_K_BIN;   // 128 half
+  }
+  
+  // Global Memory Address for Matrix QuantScale for weight and act （scale开始都放global mem）/////////////////////////////////////////////////////////////////////
+  // const half* TB_StartGPTR_W_Scale    = S_w + (y*TilingConfig::BLOCK_ROW_WARPS) * 64;
+  // const half* TB_StartGPTR_A_Scale    = S_a + (y*TilingConfig::BLOCK_ROW_WARPS) * 64;
+  // const half* WARP_StartGPTR_A_Scales = TB_StartGPTR_W_Scale + WARP_i * 64;
+  // const half* WARP_StartGPTR_B_Scales = TB_StartGPTR_A_Scale + WARP_i * 64;
+  // CopyFromGlobalToShared_Scales(QuantScales_w+WARP_i*64, WARP_StartGPTR_A_Scales);
+  // CopyFromGlobalToShared_Scales(QuantScales_a+WARP_i*64, WARP_StartGPTR_B_Scales);
+  // // Copying Act tile from Global to Shared, considering SplitK /////////////////////////////////////////////////////////////
+  // const half *BTile_GPTR = Act + Tile_Start_N * K_Global + StartBlockID_K * TilingConfig::TILE_K_BIN;
+  // for(int i=0; i<PIPELINE_LEVEL_GMEM-1; i++) {
+  //   CopyFromGlobalToShared<TilingConfig::TILE_N_BIN, TilingConfig::BLOCK_WARPS> (smem_act+i*TilingConfig::TILE_N_BIN, BTile_GPTR, K_Global, NumColumnToCopy);
+    // BTile_GPTR += TilingConfig::TILE_K_BIN;     // 64
+  // }
+
+  // Register Allocation for weight, Act, and C, Initilazed to Zeros /////////////////////////////////////////////////////////////////////
+  constexpr int NumRegSets_w = 4;     //   WARP_ROW_MMA_TENSORS                                                      // 1 set = 4 registers, containing a 16*16 MMA block
+  constexpr int NumRegSets_a = 1;     // (TilingConfig::WARP_COL_MMA_TENSORS==1) ? 1 : TilingConfig::WARP_COL_MMA_TENSORS/2;    // 1 set = 4 registers, containing a 16*16 MMA block
+  // constexpr int NumRegSets_a = (TilingConfig::WARP_COL_MMA_TENSORS==1) ? 1 : TilingConfig::WARP_COL_MMA_TENSORS/2;    // 1 set = 4 registers, containing a 16*16 MMA block
+#ifdef PIPELINE_LEVEL_SMEM
+  uint32_t a  [NumRegSets_w * PIPELINE_LEVEL_SMEM][1];      // double/Trible buffer is used // Registers to store decompressed FP6
+  uint32_t b  [NumRegSets_a * PIPELINE_LEVEL_SMEM][2];      // double/Triple buffer is used // Register to store FP16 Act matrix (a slice)
+#endif
+  int32_t c[NumRegSets_w * NumRegSets_a][REG_PER_THREAD_C_TENSOR_16_16]; // REG_PER_THREAD_C = 2 // 
+  for(int i=0; i<NumRegSets_w * NumRegSets_a; i++) 
+    for(int j=0; j<REG_PER_THREAD_C_TENSOR_16_16; j++)
+      c[i][j] = 0;
+  //
+  cp_async_wait_all();
+  __syncthreads();
+
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  int32_t Scales_RPTR_w[4]; // 4 Registers per thread for Quantization S_w
+  int32_t Scales_RPTR_a[4]; // 4 Registers per thread for Quantization S_w
+  // ExtractFromSharedToReg_Scales(Scales_RPTR_w, QuantScales_w + WARP_i*64);
+  // ExtractFromSharedToReg_Scales(Scales_RPTR_a, QuantScales_a + WARP_i*64);
+#ifdef PIPELINE_LEVEL_SMEM
+  // Initializing the Software Pipeline: writing registers. ////////////////////////////////////////////////////////////////////////////////////////////////
+  int NumSlices = 4;
+  int NumIterB = WARP_N_BIN/NumSlices/8; // =32/4/8=1 
+  uint32_t* Weight_SPTR_Start = reinterpret_cast<uint32_t*>(smem_weight_packed_bin);
+  initialize_mma_slice_binpack_w1a1<TilingConfig>(a, b, Weight_SPTR_Start, smem_act, NumIterB);
+#endif
+  // The outer loop. /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  #pragma unroll(1)
+  for (size_t tile_id_k = 0; tile_id_k < NumIter; tile_id_k++)
+  {
+//     // Trible-Buffer for A Tile
+// 	  uint32_t* __restrict__ read_SPTR_W  = Weight_SPTR + ((tile_id_k+0)                     % PIPELINE_LEVEL_GMEM) * HALF_WEIGHT_PER_UNIT; // 1024 (1)*4: 4 WARPs; (2)/4: int*+1 = char*+16
+//     // read_SPTR_W = 0x7fffd5000400
+// #ifdef PIPELINE_LEVEL_SMEM
+//     uint32_t* __restrict__ read2_SPTR_W  = Weight_SPTR + ((tile_id_k+1)                     % PIPELINE_LEVEL_GMEM) * HALF_WEIGHT_PER_UNIT;
+//     // read2_SPTR_W = 0x7fffd5000c00
+// #endif
+    uint32_t* __restrict__ read_SPTR_W  = Weight_SPTR_Start + ((tile_id_k+0)   % PIPELINE_LEVEL_GMEM) * WEIGHT_PER_UNIT_BIN/32; // 1024 (1)*4: 4 WARPs; (2)/4: int*+1 = char*+16
+    // read_SPTR_W = 0x7fffd5000400
+#ifdef PIPELINE_LEVEL_SMEM
+    uint32_t* __restrict__ read2_SPTR_W  = Weight_SPTR_Start + ((tile_id_k+1)  % PIPELINE_LEVEL_GMEM) * WEIGHT_PER_UNIT_BIN/32;
+    // read2_SPTR_W = 0x7fffd5000c00
+#endif
+    // uint32_t* __restrict__ write_SPTR_W = Weight_SPTR + ((tile_id_k+(PIPELINE_LEVEL_GMEM-1))  % PIPELINE_LEVEL_GMEM) * HALF_WEIGHT_PER_UNIT; // 1024 (1)*4: 4 WARPs; (2)/4: int*+1 = char*+16
+    uint32_t* __restrict__ write_SPTR_W = Weight_SPTR + ((tile_id_k+(PIPELINE_LEVEL_GMEM-1))  % PIPELINE_LEVEL_GMEM) * WEIGHT_PER_UNIT_BIN/32; // 1024 (1)*4: 4 WARPs; (2)/4: int*+1 = char*+16
+    // write_SPTR_W = 0x7fffd5000c00 
+    // Trible-Buffer for Act Tile
+    half  __restrict__ (*read_SPTR_A )[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1] = smem_act + ((tile_id_k+0)  % PIPELINE_LEVEL_GMEM) * WARP_N_BIN;
+// #ifdef PIPELINE_LEVEL_SMEM
+    half  __restrict__ (*read2_SPTR_A )[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1] = smem_act + ((tile_id_k+1) % PIPELINE_LEVEL_GMEM) * WARP_N_BIN;// 0x7fffd5002d00
+//  0x7fffd5002d00 - 0x7fffd5002400 = 2304 = 72*8*4B
+// #endif
+    half  __restrict__ (*write_SPTR_A)[WARP_K_BIN+PADDING_SHARED_MEM_FOR_B_1] = smem_act + ((tile_id_k+(PIPELINE_LEVEL_GMEM-1))  % PIPELINE_LEVEL_GMEM) * WARP_N_BIN;
+    // write_SPTR = 0x7fffd5002d00
+    bool GlobalCopy = (tile_id_k+PIPELINE_LEVEL_GMEM-1) < NumIter;
+    // Copying A tile from Global to Register, Bypassing L1, using double-buffer   
+    // CopyFromGlobalToShared_W<2048>(write_SPTR_W, WARP_StartGPTR_W, K_Global, NumColumnToCopy);
+    CopyFromGlobalToShared_BinaryW<512>(write_SPTR_W, WARP_StartGPTR_W, K_Global, NumColumnToCopy);
+    // copying Act tile from GlobalMemory to SharedMemory
+	  CopyFromGlobalToShared_A_W2A3<TilingConfig::TILE_N_BIN, TilingConfig::BLOCK_WARPS>(write_SPTR_A, TB_StartGPTR_A, K_Global, NumColumnToCopy, GlobalCopy);
+    
+    cp_async_group_commit();
+  #ifdef PIPELINE_LEVEL_SMEM
+    uint32_t (*b_read )[2] = b;  // 4*1
+    uint32_t (*b_write)[2] = b; 
+    if (tile_id_k%2==1) {b_read += NumRegSets_a; } else {b_write += NumRegSets_a;}
+    core_mma_slice_binpack_w1a1<TilingConfig>(c, a, b_read, read_SPTR_W, read_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  1, NumIterB, INSTR); // read_SPTR_W, read_SPTR_Frag2 are different for each WARP; read_SPTR is shared among WARPs
+    core_mma_slice_binpack_w1a1<TilingConfig>(c, a, b_read, read_SPTR_W, read_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  2, NumIterB, INSTR);
+    core_mma_slice_binpack_w1a1<TilingConfig>(c, a, b_read, read_SPTR_W, read_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  3, NumIterB, INSTR);
+    // Barriers and Synchronizations
+    cp_async_wait_group<PIPELINE_LEVEL_GMEM-2>();
+    __syncthreads();
+    core_mma_slice_binpack_w2a3<TilingConfig>(c, a, b_read, read2_SPTR_W, read2_SPTR_A, Scales_RPTR_w, Scales_RPTR_a,  0, NumIterB, INSTR);
+    // CopyFromSharedToRegister_BinaryW<1, 1>   (a_write, read2_SPTR_W, 0);
+    PackFromSharedToRegister_BinaryAct<1>  (b_write, read2_SPTR_A, NumIterB);
+    write_SPTR_W = write_SPTR_W;
+    WARP_StartGPTR_W += 4; // 128 bin = 4 uint32
+    TB_StartGPTR_A += TilingConfig::TILE_K_BIN;    // 128 half
+  #else
+    // did not update for bgemm
+    PipelinedCoreLoop<TilingConfig>(c, read_SPTR_A, read_SPTR_W, Scales_RPTR_w, Scales_RPTR_a); // read_SPTR_W, read_SPTR_Frag2 are different for each WARP; read_SPTR is shared among WARPs
+    // Updating global PTRs
+    WARP_StartGPTR_W += SMEM_SIZE_PER_WARP/16;  // 4KB/16=256 (1)/16: int4*+1 = char*+16
+    WARP_StartGPTR_A2 += SMEM_SIZE_IN_BYTES_PER_WARP_A2/16;  // 8KB/16=512 (1)/16: int4*+1 = char*+16
+    BTile_GPTR += TilingConfig::TILE_K_BIN;
+    // Barriers and Synchronizations
+    cp_async_wait_group<PIPELINE_LEVEL_GMEM-2>();
+    __syncthreads();
+  #endif
+  }
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  /////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////////
+  // Store the C fragments to shared memory.
+  int32_t (*smem_CFrag) [TilingConfig::TILE_M_W2A3+PADDING_SHARED_MEM_FOR_C_0] =
+        reinterpret_cast <int32_t (*)[TilingConfig::TILE_M_W2A3+PADDING_SHARED_MEM_FOR_C_0]> (smem_weight_packed_bin);
+  StoreToSharedMemoryFromRegister_w2a3<TilingConfig>(smem_CFrag, c, NumIterB, NumRegSets_w);
+  __syncthreads();
+  // Now that shared memory contains all the D tiles, stream them to global memory.
+  OutputDataType* BlockGlobalPTR = C + BatchID*(M_Global*N_Global) + Tile_Start_M + Tile_Start_N*M_Global;
+  for(size_t i=warpId; i<NumColumnToCopy; i+=TilingConfig::BLOCK_WARPS)    // i-th column
+    #pragma unroll
+    for(size_t j=threadIdx.x%WARP_SIZE; j<TilingConfig::TILE_M_W2A3; j+=WARP_SIZE) // j-th row
+    {
+      if constexpr (std::is_same<OutputDataType, half>::value) {
+        BlockGlobalPTR[j+i*M_Global] = __int2half_rn(smem_CFrag[i][j]);
+      // } else if constexpr (std::is_same<OutputDataType, float>::value) {                                
+      //   BlockGlobalPTR[j+i*M_Global] = __uint2float_rn(smem_CFrag[i][j]);
+      } else {
+        BlockGlobalPTR[j+i*M_Global] = smem_CFrag[i][j];
+      }
+    }
+}
